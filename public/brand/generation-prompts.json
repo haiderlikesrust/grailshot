@@ -1,0 +1,13 @@
+{
+  "mode": "built-in image_gen",
+  "assets": [
+    {
+      "key": "grailshot-emblem",
+      "prompt": "Use case: logo-brand\nAsset type: premium esports brand emblem for GRAILSHOT, a live multiplayer card aim/snipe game.\nPrimary request: create ONE original compact brand emblem fusing a sharp aiming crosshair, an angular letter G, and a trading-card silhouette into one coherent simple mark.\nScene/backdrop: genuinely transparent background, isolated cutout, no backdrop or floor.\nStyle/medium: polished 3D enamel and metal emblem with crisp purposeful edges, premium competitive gaming identity. Bold simple silhouette recognizable at 40px; restrained depth, no tiny decorative detail.\nComposition/framing: centered in a square canvas, emblem fills approximately 80 percent of canvas, fully visible with generous clear margin.\nColor palette: electric cyan #4cc2ff and orange #ff8752, small graphite metal accents; clean high contrast.\nLighting/mood: controlled studio reflections and subtle dimensional highlights.\nConstraints: no words or text; only the integrated angular G letterform. No existing brand marks, no Pokémon or Solana logos, no copyrighted character art, no watermark, no background effects."
+    },
+    {
+      "key": "grailshot-pack",
+      "prompt": "Use case: product-mockup\nAsset type: premium sealed trading-card pack render for GRAILSHOT treasury and prize preparation interface.\nPrimary request: ONE original sealed foil trading-card pack, premium science-fiction sports collectible packaging.\nScene/backdrop: genuinely transparent background, clean isolated cutout, no floor or environmental scene.\nSubject: portrait sealed foil card pack with realistic crimped foil seals at top and bottom, charcoal brushed foil body, bold cyan #4cc2ff and orange #ff8752 geometric targeting emblem integrated with angular G and card shape.\nStyle/medium: high-end photorealistic 3D product render, tactile metallic foil, restrained sharp studio highlights.\nComposition/framing: frontal with slight three-quarter perspective, entire pack fully visible, centered, portrait silhouette and clear margins. The packaging front must be legible.\nText (verbatim): large clean geometric sans serif word \"GRAILSHOT\" (G R A I L S H O T) near upper front. Small precise tagline \"HOLD. AIM. WIN.\" near lower front. These are the only words.\nConstraints: clean strong design with minimal readable text, no extra labels or fake microtext; no copyrighted characters; no Pokémon or Solana logos; no other brand logos; no watermark; no external shadow panel or backdrop."
+    }
+  ]
+}

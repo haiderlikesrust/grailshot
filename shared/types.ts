@@ -1,5 +1,5 @@
 import type { Target } from './game';
-export type Prize = { id: string; mint: string; name: string; image: string; value: number; rarity: string; purchaseSignature?: string; transferSignature?: string };
+export type Prize = { id: string; coinMint?: string; mint: string; name: string; image: string; value: number; rarity: string; purchaseSignature?: string; transferSignature?: string };
 export type Standing = { wallet: string; name: string; score: number; shots: number; disqualified?: boolean };
 export type ShotResult = { roundId: string; targetId: string; accepted: true; score: number; totalScore: number; shots: number } | { roundId: string; targetId: string; accepted: false; message: string };
 export type BuybackQuote = { status: 'available' | 'unavailable' | 'error'; amount: number | null; checkedAt: number };

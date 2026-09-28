@@ -10,9 +10,10 @@ export class Treasury {
   settings:Settings={paused:false,dailyCapUsd:null,gasReserveSol:config.GAS_RESERVE_SOL,slippageBps:config.SLIPPAGE_BPS,allocationVersion:1};
   view:TreasuryView={enabled:config.live,ready:false,paused:false,available:0,balanceStatus:'unconfigured',balanceUpdatedAt:null,rate:0,claimed:0,spentToday:0,nextPackTier:null,reserve:config.GAS_RESERVE_SOL,cardsBalance:'0',address:null,rpc:{ok:false,latency:null,checkedAt:null},blockers:[],error:null};
   lastRefresh=0;lastCollection=0;availableMicros=0n;tiers:number[]=[];paidPacks=0;
+  coinHistoryBlocker:string|null=null;
   constructor(readonly db:Database,readonly chain:Chain,readonly providers:Providers){}
   async init(){const row=(await this.db.query('SELECT data FROM settings WHERE id=1')).rows[0];if(row){const {cadence:legacyCadence,...saved}=row.data;this.settings=saved;if(this.settings.allocationVersion!==1)await this.save({...this.settings,dailyCapUsd:null,allocationVersion:1});else if(legacyCadence)await this.save(this.settings);}else await this.save(this.settings);this.view.blockers=this.blockers();this.view.address=this.chain.address||config.FEE_RECIPIENT||null;this.view.reserve=this.settings.gasReserveSol;}
-  blockers(){return[...configBlockers(),...(this.settings.dailyCapUsd!==null&&this.settings.dailyCapUsd<=0?['Set a positive daily cap or enable unlimited spending']:[]),...(this.chain.address&&this.chain.address!==config.FEE_RECIPIENT?['Treasury signer must match FEE_RECIPIENT']:[])];}
+  blockers(){return[...configBlockers(),...(this.coinHistoryBlocker?[this.coinHistoryBlocker]:[]),...(this.settings.dailyCapUsd!==null&&this.settings.dailyCapUsd<=0?['Set a positive daily cap or enable unlimited spending']:[]),...(this.chain.address&&this.chain.address!==config.FEE_RECIPIENT?['Treasury signer must match FEE_RECIPIENT']:[])];}
   async save(settings:Settings){settings={...settings,allocationVersion:1};await this.db.query('INSERT INTO settings(id,data) VALUES(1,$1) ON CONFLICT(id) DO UPDATE SET data=EXCLUDED.data',[JSON.stringify(settings)]);this.settings=settings;this.lastRefresh=0;this.view.paused=settings.paused;this.view.blockers=this.blockers();this.view.ready=false;this.view.nextPackTier=null;}
   async refresh(){
     this.lastRefresh=Date.now();

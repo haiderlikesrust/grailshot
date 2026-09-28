@@ -11,7 +11,7 @@ export function useGame() {
   const socket = useRef<WebSocket | null>(null), offset = useRef(0), rtts = useRef<number[]>([]);
   const [shotResult,setShotResult]=useState<ShotResult|null>(null);
   const [latestResult,setLatestResult]=useState<RoundView|null>(null);
-  useEffect(()=>{api<RoundView|null>('/rounds/latest-result').then(result=>setLatestResult(current=>current&&current.number>(result?.number??0)?current:result)).catch(()=>{});},[]);
+  useEffect(()=>{if(!snapshot)return;let disposed=false;setLatestResult(null);setShotResult(null);api<RoundView|null>('/rounds/latest-result').then(result=>{if(!disposed)setLatestResult(current=>current&&current.number>(result?.number??0)?current:result);}).catch(()=>{});return()=>{disposed=true;};},[snapshot?.mint]);
   useEffect(()=>{setShotResult(null);},[player?.wallet]);
   useEffect(()=>{if(snapshot?.round?.status==='complete')setLatestResult(snapshot.round);},[snapshot?.round]);
   const refreshPlayer = useCallback(async () => { const current = await api<{player:Player|null}>('/me'); setPlayer(current.player); if (current.player) { try { setHolding(await api('/eligibility')); } catch { setHolding(null); } } else setHolding(null); }, []);

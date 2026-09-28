@@ -37,6 +37,12 @@ After fixing the cause and deploying, have the registered players reconnect and 
 
 ## Redeployments and storage
 
+### Changing the coin contract address
+
+Set `MEMECOIN_MINT` to the new Solana mint in Dokploy's environment, save, and deploy the latest `main`. Refresh the site after deployment. New rounds record their coin mint, and the arena's latest winner, rankings and profile match/prize history show only the configured coin. Historical rounds created before mint tracking are hidden from these public views because their original coin cannot be determined reliably. They remain saved, along with all payment jobs, transfers and audit records. Round numbers continue rather than restarting at 1. Switching back to a tracked coin restores its public history.
+
+Do **not** reset volumes. Treasury balances, spending controls and the financial ledger remain shared. Finish any active round before changing the mint. An unfinished round belonging to another coin, or without a recorded coin, blocks automatic round processing and appears as a Control Room readiness blocker; its records are preserved for reconciliation. Restore the original mint to finish a tracked round before switching again. Unlabelled unfinished rounds require investigation rather than guessing their coin or repeating payments.
+
 For a code or artwork update, open the existing GRAILSHOT Compose service, keep branch `main` and Compose Path `./compose.dokploy.yaml`, and click **Deploy** in **General**. Follow the new record in **Deployments** until the build succeeds and the services are healthy, then refresh the public site. The branding update requires no new environment variables or domain changes. Asset filenames are versioned so the new images do not reuse the old browser-cache entries. See [Dokploy's Compose deployment controls](https://docs.dokploy.com/docs/core/docker-compose).
 
 Run **one game container**. It holds the authoritative timers and WebSocket players; PostgreSQL's advisory lock prevents a second coordinator. Do not enable parallel game replicas, rolling overlap or blue/green coordinators. Pause the treasury in `/admin` and let a current round settle before a planned redeploy. An interruption requeues an active prize; incomplete contests never choose a winner.

@@ -25,8 +25,14 @@ export function Grailshot({page}:{page:'arena'|'leaderboard'|'profile'|'admin'})
   const [leaders,setLeaders]=useState<any[]>([]),[profile,setProfile]=useState<any>(null),[name,setName]=useState(''),[settings,setSettings]=useState<Settings|null>(null),[jobs,setJobs]=useState<any[]>([]),[purchaseError,setPurchaseError]=useState('');
   useEffect(()=>{const id=setInterval(()=>setNow(Date.now()),250);return()=>clearInterval(id);},[]);
   useEffect(()=>{const registry=getWallets();const update=()=>setWallets(registry.get().filter(w=>'standard:connect' in w.features&&'solana:signMessage' in w.features));update();const off=registry.on('register',update);return()=>off();},[]);
-  useEffect(()=>{api('/leaderboard').then(x=>setLeaders(x.players)).catch(()=>{});},[snapshot?.round?.status]);
-  useEffect(()=>{if(page==='profile'&&player)api(`/profiles/${player.wallet}`).then(x=>{setProfile(x);setName(x.name);}).catch(e=>setNotice(e.message));if(page==='admin'&&player?.owner)api('/admin').then(x=>{setSettings(x.settings);setJobs(x.jobs);setPurchaseError(['purchasing','review'].includes(x.round?.status)?x.audit?.find((a:any)=>a.event==='pack-delay'&&a.data.round===x.round.id)?.data.error??'':'');}).catch(e=>setNotice(e.message));},[page,player,snapshot?.round?.status]);
+  useEffect(()=>{setLeaders([]);setProfile(null);},[snapshot?.mint]);
+  useEffect(()=>{let disposed=false;api('/leaderboard').then(x=>{if(!disposed)setLeaders(x.players);}).catch(()=>{});return()=>{disposed=true;};},[snapshot?.round?.status,snapshot?.mint]);
+  useEffect(()=>{
+    let disposed=false;
+    if(page==='profile'&&player)api(`/profiles/${player.wallet}`).then(x=>{if(!disposed){setProfile(x);setName(x.name);}}).catch(e=>{if(!disposed)setNotice(e.message);});
+    if(page==='admin'&&player?.owner)api('/admin').then(x=>{if(disposed)return;setSettings(x.settings);setJobs(x.jobs);setPurchaseError(['purchasing','review'].includes(x.round?.status)?x.audit?.find((a:any)=>a.event==='pack-delay'&&a.data.round===x.round.id)?.data.error??'':'');}).catch(e=>{if(!disposed)setNotice(e.message);});
+    return()=>{disposed=true;};
+  },[page,player,snapshot?.round?.status,snapshot?.mint]);
   async function connect(wallet:any) {setBusy(true);setNotice('');try { const result=await wallet.features['standard:connect'].connect();const account=result.accounts.find((a:any)=>a.chains.some((c:string)=>c.startsWith('solana:')));if(!account)throw new Error('Choose a Solana account.');const challenge=await api('/auth/challenge',{wallet:account.address});const [signed]=await wallet.features['solana:signMessage'].signMessage({account,message:new TextEncoder().encode(challenge.message)});await api('/auth/verify',{id:challenge.id,signature:bs58.encode(signed.signature)});await game.refreshPlayer();setWalletOpen(false);}catch(e){setNotice((e as Error).message);}finally{setBusy(false);}}
   async function join() {if(!player){setWalletOpen(true);return;}setBusy(true);try{await api('/rounds/join',{});setNotice('You’re in. Stay online for the countdown.');setPractice(false);}catch(e){setNotice((e as Error).message);}finally{setBusy(false);}}
   async function logout(){await api('/auth/logout',{});await game.refreshPlayer();setProfile(null);}
@@ -64,6 +70,5 @@ export function Grailshot({page}:{page:'arena'|'leaderboard'|'profile'|'admin'})
 }
 function Leaderboard({rows}:{rows:any[]}){return <Table><TableHeader><TableRow><TableHead>RANK</TableHead><TableHead>PLAYER</TableHead><TableHead>WINS</TableHead><TableHead>VALUE WON</TableHead><TableHead>BEST</TableHead></TableRow></TableHeader><TableBody>{rows.map((p,i)=><TableRow key={p.wallet}><TableCell className={i===0?'orange':''}>#{String(i+1).padStart(2,'0')}</TableCell><TableCell><strong>{p.name}</strong><small className="wallet-caption">{shortWallet(p.wallet)}</small></TableCell><TableCell>{p.wins}</TableCell><TableCell>{money(p.valueWon)}</TableCell><TableCell>{p.bestScore}</TableCell></TableRow>)}</TableBody></Table>;}
 function Empty({icon,title,text,action}:{icon:React.ReactNode;title:string;text:string;action?:React.ReactNode}){return <div className="empty-state">{icon}<h3>{title}</h3><p>{text}</p>{action}</div>;}
-
 
 

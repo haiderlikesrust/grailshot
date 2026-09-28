@@ -4,26 +4,28 @@ import type { Prize, RoundView, Standing } from '../shared/types';
 import { atomic, audit, type Database } from './db';
 import { PendingOperation, ReviewRequired } from './jobs';
 import type { Treasury } from './treasury';
-export type Round={id:string;number:number;status:string;deadline:number;stage:number;targets:Target[];contenders:string[];prize:Prize|null;tier:number|null;winner:string|null;message:string|null;eligibilitySupply?:string;reviewReason?:string;retryAt?:number;retryFailures?:number};
+import { config } from './config';
+export type Round={id:string;coinMint?:string;number:number;status:string;deadline:number;stage:number;targets:Target[];contenders:string[];prize:Prize|null;tier:number|null;winner:string|null;message:string|null;eligibilitySupply?:string;reviewReason?:string;retryAt?:number;retryFailures?:number};
 export class Engine {
   current:Round|null=null;
   standings:Standing[]=[];
   private lastPurchaseRetry=0;
   private retry(error:unknown){const r=this.current!;r.retryFailures=error instanceof PendingOperation?0:(r.retryFailures??0)+1;r.retryAt=Date.now()+(error instanceof PendingOperation?3000:Math.min(60_000,3000*2**Math.min(r.retryFailures,5)));}
-  constructor(readonly db:Database,readonly treasury:Treasury,readonly online:(wallet:string)=>boolean){}
+  constructor(readonly db:Database,readonly treasury:Treasury,readonly online:(wallet:string)=>boolean,readonly coinMint=config.MEMECOIN_MINT){}
   async persist(){if(!this.current)return;const{number,...data}=this.current;await this.db.query('UPDATE rounds SET status=$2,data=$3 WHERE id=$1',[data.id,data.status,JSON.stringify(data)]);}
   async init(){
     const rows=(await this.db.query("SELECT * FROM rounds WHERE status NOT IN('complete','cancelled','interrupted','carried') ORDER BY number DESC")).rows;
     for(const row of rows){const r={...row.data,number:Number(row.number)} as Round;
+      if(r.coinMint!==this.coinMint){this.treasury.coinHistoryBlocker='Unfinished rounds from a previous or unlabelled coin need reconciliation before new rounds can start.';this.treasury.view.ready=false;this.treasury.view.blockers=this.treasury.blockers();continue;}
       if(['purchasing','awarding','review'].includes(r.status)&&!this.current){this.current=r;continue;}
       if(r.prize)await this.db.query("UPDATE prizes SET status='available',round_id=NULL WHERE id=$1 AND winner IS NULL",[r.prize.id]);r.status='interrupted';r.message='The match was interrupted. Its prize is reserved for a new round.';await this.db.query('UPDATE rounds SET status=$2,data=$3 WHERE id=$1',[r.id,r.status,JSON.stringify(r)]);
     }
     await this.reloadStandings();
   }
   async reloadStandings(){this.standings=this.current?(await this.db.query('SELECT e.wallet,p.name,e.score,e.shots,e.disqualified FROM entries e JOIN players p ON p.wallet=e.wallet WHERE round_id=$1 ORDER BY score DESC,wallet',[this.current.id])).rows as Standing[]:[];}
-  async create(prize:Prize|null,tier:number|null){const id=randomUUID(),round={id,status:'registration',deadline:Date.now()+30_000,stage:0,targets:[],contenders:[],prize,tier,winner:null,message:null};const row=(await this.db.query('INSERT INTO rounds(id,status,data,created_at) VALUES($1,$2,$3,$4) RETURNING number',[id,round.status,JSON.stringify(round),Date.now()])).rows[0];this.current={...round,number:Number(row.number)};this.standings=[];if(prize)await this.db.query("UPDATE prizes SET status='reserved',round_id=$2 WHERE id=$1",[prize.id,id]);}
+  async create(prize:Prize|null,tier:number|null){const id=randomUUID(),round={id,coinMint:this.coinMint,status:'registration',deadline:Date.now()+30_000,stage:0,targets:[],contenders:[],prize,tier,winner:null,message:null};const row=(await this.db.query('INSERT INTO rounds(id,status,data,created_at) VALUES($1,$2,$3,$4) RETURNING number',[id,round.status,JSON.stringify(round),Date.now()])).rows[0];this.current={...round,number:Number(row.number)};this.standings=[];if(prize)await this.db.query("UPDATE prizes SET status='reserved',round_id=$2 WHERE id=$1",[prize.id,id]);}
   async join(wallet:string){const r=this.current;if(!r||r.status!=='registration'||r.deadline<=Date.now())throw new Error('Registration opens when the next pack is funded.');if(!this.online(wallet))throw new Error('Stay connected to the live arena before joining.');if(this.standings.some(p=>p.wallet===wallet))return;if(this.standings.length>=200)throw new Error('This round is full. Join the next drop.');const check=await this.treasury.chain.eligibility(wallet);if(r.deadline<=Date.now())throw new Error('Registration has closed.');if(!check.configured)throw new Error('Live rounds open when the token launches.');if(!check.eligible)throw new Error('Hold at least 0.1% of the coin to enter.');await this.db.query('INSERT INTO entries(round_id,wallet) VALUES($1,$2) ON CONFLICT DO NOTHING',[r.id,wallet]);await this.reloadStandings();}
-  view(wallet?:string,now=Date.now()):RoundView|null{const r=this.current;if(!r)return null;const player=this.standings.find(s=>s.wallet===wallet);const target=r.status==='live'?r.targets.find(t=>targetVisible(t,now))??null:null;return{id:r.id,number:r.number,status:r.status,deadline:r.deadline,stage:r.stage,entrants:this.standings.filter(s=>!s.disqualified).length,standings:this.standings,prize:r.prize,tier:r.tier,winner:r.winner,message:r.message,registered:!!player,target,canShoot:!!player&&!player.disqualified&&r.status==='live'&&r.contenders.includes(wallet!)};}
+  view(wallet?:string,now=Date.now()):RoundView|null{const r=this.current;if(!r||r.coinMint!==this.coinMint)return null;const player=this.standings.find(s=>s.wallet===wallet);const target=r.status==='live'?r.targets.find(t=>targetVisible(t,now))??null:null;return{id:r.id,number:r.number,status:r.status,deadline:r.deadline,stage:r.stage,entrants:this.standings.filter(s=>!s.disqualified).length,standings:this.standings,prize:r.prize,tier:r.tier,winner:r.winner,message:r.message,registered:!!player,target,canShoot:!!player&&!player.disqualified&&r.status==='live'&&r.contenders.includes(wallet!)};}
   async shot(wallet:string,roundId:string,targetId:string,x:number,y:number,receivedAt:number,latency:number){const r=this.current;if(!r||r.id!==roundId||r.status!=='live'||!r.contenders.includes(wallet))throw new Error('You are not playing in this round.');const target=r.targets.find(t=>t.id===targetId);if(!target)throw new Error('Unknown target.');const score=scoreShot(target,x,y,receivedAt,latency);if(score===null)throw new Error('That shot missed the target window.');
     await atomic(this.db,async()=>{const inserted=await this.db.query('INSERT INTO shots(round_id,wallet,target_id,x,y,score,received_at,latency) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING RETURNING target_id',[r.id,wallet,targetId,x,y,score,receivedAt,latency]);if(!inserted.rows.length)throw new Error('One shot per target.');await this.db.query('UPDATE entries SET score=score+$3,shots=shots+1 WHERE round_id=$1 AND wallet=$2',[r.id,wallet,score]);});await this.reloadStandings();
     const standing=this.standings.find(p=>p.wallet===wallet)!;
@@ -31,10 +33,11 @@ export class Engine {
   }
   async scheduleTargets(wallets:string[],count:number){const r=this.current!;const startsAt=Date.now()+5000;r.status='countdown';r.deadline=startsAt;r.contenders=wallets;r.targets=createTargets(startsAt,count,()=>randomInt(0,1_000_000)/1_000_000,randomUUID);r.message=r.stage?`Tiebreaker ${r.stage} · ${wallets.length} players remain`:'React fast. Ten flashes. One winner.';await this.persist();}
   async step(){const now=Date.now(),t=this.treasury;let r=this.current;
+    if(t.coinHistoryBlocker)return;
     if(!r||['complete','cancelled','carried','interrupted'].includes(r.status)){
       await t.maintain();if(!t.view.ready||t.settings.paused||!t.view.rpc.ok)return;
       if(r&&now<r.deadline)return;
-      const prize=(await this.db.query("SELECT data FROM prizes WHERE status='available' AND winner IS NULL LIMIT 1")).rows[0]?.data??null;
+      const prize=(await this.db.query("SELECT data FROM prizes WHERE status='available' AND winner IS NULL AND data->>'coinMint'=$1 LIMIT 1",[this.coinMint])).rows[0]?.data??null;
       const tier=t.affordable();if(!prize&&!tier)return;await this.create(prize,tier);return;
     }
     if(r.status==='registration'){

@@ -67,6 +67,27 @@ test('pack rejects stolen/split payments, substituted assets, altered memo and i
   assert.throws(() => f.check(unsigned), /signature/);
   const tampered = f.build(); tampered.message.recentBlockhash = attacker.toBase58();
   assert.throws(() => f.check(tampered), /signature/);
+  assert.throws(() => validatePackPayment(f.build(), f.treasury.publicKey, attacker, mint, 25_000_000n, f.memo), error => {
+    assert.ok(error instanceof ReviewRequired);
+    assert.ok(error.message.includes(`Configured payment wallet: ${attacker.toBase58()}`));
+    assert.ok(error.message.includes(`Provider fee payer: ${f.provider.publicKey.toBase58()}`));
+    return true;
+  });
+});
+
+test('treasury-paid packs accept the verified provider memo co-signature without changing its message', () => {
+  const f=fixture();
+  f.instructions[1].keys.push({pubkey:f.provider.publicKey,isSigner:true,isWritable:false});
+  f.instructions[2].keys.push({pubkey:f.treasury.publicKey,isSigner:true,isWritable:false});
+  const tx=f.build(f.instructions,false);tx.sign([f.provider]);
+  const providerIndex=tx.message.staticAccountKeys.findIndex(k=>k.equals(f.provider.publicKey));
+  const signature=new Uint8Array(tx.signatures[providerIndex]),message=new Uint8Array(tx.message.serialize());
+  f.check(tx);tx.sign([f.treasury]);f.check(tx);
+  assert.deepEqual(tx.signatures[providerIndex],signature);assert.deepEqual(tx.message.serialize(),message);
+  tx.signatures[providerIndex].fill(0);assert.throws(()=>f.check(tx),/provider signature/);
+  const impostor=Keypair.generate();f.instructions[1].keys[0].pubkey=impostor.publicKey;
+  const extra=f.build(f.instructions,false);extra.sign([impostor]);
+  assert.throws(()=>f.check(extra),/unexpected signer/);
 });
 
 test('metadata URLs reject suffix tricks, credentials, private hosts and redirects', async () => {

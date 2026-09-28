@@ -48,7 +48,7 @@ export class Engine {
     if(r.status==='purchasing'){
       if(t.settings.paused)return;if(now-this.lastPurchaseRetry<3000)return;this.lastPurchaseRetry=now;
       try{r.prize=await t.providers.purchase(r.id,r.tier!,t.settings);await this.db.query("UPDATE prizes SET status='reserved',round_id=$2 WHERE id=$1",[r.prize.id,r.id]);t.opened();await this.persist();await this.scheduleTargets(this.standings.map(p=>p.wallet),10);}
-      catch(error){if(error instanceof PendingOperation){r.message='The pack is being confirmed on-chain.';}else{r.message='The pack is delayed. Your place and any purchased prize are preserved.';await audit(this.db,'pack-delay',{round:r.id,error:(error as Error).message});if(error instanceof ReviewRequired)r.status='review';}await this.persist();}return;
+      catch(error){if(error instanceof PendingOperation){r.message='The pack is being confirmed on-chain.';}else{r.message='The pack is delayed. Your place and any purchased prize are preserved.';await audit(this.db,'pack-delay',{round:r.id,error:(error as Error).message});await this.db.query('UPDATE jobs SET error=$2,updated_at=$3 WHERE id=$1',[`pack:${r.id}`,(error as Error).message,Date.now()]);if(error instanceof ReviewRequired)r.status='review';}await this.persist();}return;
     }
     if(r.status==='countdown'&&now>=r.deadline){r.status='live';r.deadline=r.deadline+r.targets.length*TARGET_SLOT_MS+100;r.message=null;await this.persist();return;}
     if(r.status==='live'&&now>=r.deadline){r.status='adjudicating';r.deadline=0;await this.persist();return;}

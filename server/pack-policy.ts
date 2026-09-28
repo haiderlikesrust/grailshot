@@ -12,10 +12,12 @@ export function validatePackPayment(tx: VersionedTransaction, treasury: PublicKe
   const message = TransactionMessage.decompile(tx.message);
   const signers = tx.message.staticAccountKeys.slice(0, tx.message.header.numRequiredSignatures);
   const sponsored = message.payerKey.equals(recipient);
-  if ((!sponsored && !message.payerKey.equals(treasury)) || signers.length !== (sponsored ? 2 : 1) || !signers.some(k => k.equals(treasury)) || signers.some(k => !k.equals(treasury) && !k.equals(recipient))) throw new ReviewRequired('Pack requests an unexpected signer or fee payer.');
-  if (sponsored) {
-    const index = signers.findIndex(k => k.equals(recipient));
-    if (!nacl.sign.detached.verify(tx.message.serialize(), tx.signatures[index], recipient.toBytes())) throw new ReviewRequired('Pack sponsor signature is missing or invalid.');
+  const providerIndex = signers.findIndex(k => k.equals(recipient));
+  // Funded players pay the fee, but Collector Crypt still co-signs the memo.
+  // Verify its signature in either payer order and allow no other signer.
+  if ((!sponsored && !message.payerKey.equals(treasury)) || signers.length < 1 || signers.length > 2 || (sponsored && signers.length !== 2) || !signers.some(k => k.equals(treasury)) || signers.some(k => !k.equals(treasury) && !k.equals(recipient))) throw new ReviewRequired(`Pack requests an unexpected signer or fee payer. Configured payment wallet: ${recipient.toBase58()}. Provider fee payer: ${message.payerKey.toBase58()}. Check COLLECTOR_CRYPT_PAYMENT_WALLET.`);
+  if (providerIndex >= 0) {
+    if (!nacl.sign.detached.verify(tx.message.serialize(), tx.signatures[providerIndex], recipient.toBytes())) throw new ReviewRequired('Pack provider signature is missing or invalid.');
   }
   const source = getAssociatedTokenAddressSync(mint, treasury);
   const destination = getAssociatedTokenAddressSync(mint, recipient);

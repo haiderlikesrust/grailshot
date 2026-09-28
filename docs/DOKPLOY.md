@@ -29,6 +29,12 @@ In `/admin`, clear the listed launch blockers before expecting a paid round. Set
 
 A manual CARDS or USDC deposit funds the prize pool but does not increase the **Fee income** statistic, which measures confirmed creator-fee claims. The quoted USDC amount may differ from a wallet's displayed market value.
 
+## Recover a stopped pack purchase
+
+The Control Room shows the purchase error above the recovery queue. A signer mismatch stops the payment before treasury signing; it does not undo an already confirmed CARDS-to-USDC swap. Collector Crypt can either sponsor the fee or let a funded treasury pay it while co-signing the memo. Both forms must retain the provider's valid signature and the exact configured recipient, USDC amount and open-mode memo.
+
+After fixing the cause and deploying, have the registered players reconnect and use **Retry paused round**. The existing swap is reconciled before purchase continues. An expired order that the treasury has not signed is replaced only after checking the provider has no payment or award for it. Previously signed payments retain their existing signature and must be reconciled through recovery before rebuilding. Keep the reserved USDC in the treasury during recovery; moving it out prevents payment.
+
 ## Redeployments and storage
 
 For a code or artwork update, open the existing GRAILSHOT Compose service, keep branch `main` and Compose Path `./compose.dokploy.yaml`, and click **Deploy** in **General**. Follow the new record in **Deployments** until the build succeeds and the services are healthy, then refresh the public site. The branding update requires no new environment variables or domain changes. Asset filenames are versioned so the new images do not reuse the old browser-cache entries. See [Dokploy's Compose deployment controls](https://docs.dokploy.com/docs/core/docker-compose).

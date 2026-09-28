@@ -5,11 +5,78 @@ import { openDatabase, migrate } from '../server/db';
 import { Jobs, PendingOperation, ReviewRequired } from '../server/jobs';
 import { Chain } from '../server/chain';
 import { Providers } from '../server/providers';
+import { Engine } from '../server/engine';
+import type { Treasury } from '../server/treasury';
 import { DEFAULT_CADENCE } from '../shared/game';
 import type { Settings } from '../shared/types';
 import { config } from '../server/config';
 
 const settings:Settings={paused:false,dailyCapUsd:100,gasReserveSol:.05,slippageBps:100,cadence:DEFAULT_CADENCE};
+
+test('a landed funding swap is reconciled before purchase even when USDC is already visible',async()=>{
+  const db=await openDatabase(undefined,'memory://');await migrate(db);const jobs=new Jobs(db);
+  try{
+    for(const funded of [false,true]){
+      const round=`visible-swap-${funded}`,id=`pack:${round}`;let reconciles=0;
+      await jobs.put(id,'pack','purchasing',{tier:25,funded});
+      await jobs.put(`${id}:usdc`,'swap','submitted',{inputMint:config.CARDS_MINT,outputMint:config.USDC_MINT,amount:'500',minOutput:'25000000',signature:'already-landed-fixture'});
+      const chain={address:'fixture',balance:async()=>25_250_000n} as unknown as Chain;
+      const p=new Providers(chain,jobs);
+      p.swap=async(swapId,input,output,amount,_settings,minOutput)=>{
+        reconciles++;assert.equal(swapId,`${id}:usdc`);assert.equal(amount,500n);assert.equal(minOutput,25_000_000n);
+        assert.equal(input,config.CARDS_MINT);assert.equal(output,config.USDC_MINT);
+        const saved=await jobs.get(swapId);await jobs.put(swapId,'swap','confirmed',saved.data);
+        return{signature:saved.data.signature,received:25_250_000n};
+      };
+      p.cc=async()=>{assert.equal((await jobs.get(`${id}:usdc`)).status,'confirmed');throw new Error('Fixture provider outage');};
+      await assert.rejects(p.purchase(round,25,settings),/Fixture provider outage/);
+      await assert.rejects(p.purchase(round,25,settings),/Fixture provider outage/);
+      assert.equal(reconciles,1,'A retry does not perform a second swap');
+      assert.equal((await jobs.get(id)).data.funded,true);
+    }
+  }finally{await db.close();}
+});
+
+test('pack validation failures are preserved for the owner while public round errors stay generic',async()=>{
+  const db=await openDatabase(undefined,'memory://');await migrate(db);const jobs=new Jobs(db);
+  try{
+    const reason='Pack requests an unexpected signer or fee payer.';
+    const treasury={settings,providers:{purchase:async()=>{throw new ReviewRequired(reason);}}} as unknown as Treasury;
+    const engine=new Engine(db,treasury,()=>true);await engine.create(null,25);
+    const r=engine.current!;r.status='purchasing';await jobs.put(`pack:${r.id}`,'pack','purchasing',{tier:25});
+    await engine.step();
+    assert.equal(r.status,'review');assert.equal((await jobs.get(`pack:${r.id}`)).error,reason);
+    assert.equal((await db.query("SELECT data FROM audit WHERE event='pack-delay'")).rows[0].data.error,reason);
+    assert.ok(!engine.view()!.message!.includes(reason));
+    assert.equal(r.prize,null);
+  }finally{await db.close();}
+});
+
+test('expired unsigned pack orders refresh only after checking provider activity and persist the new memo before payment',async()=>{
+  const db=await openDatabase(undefined,'memory://');await migrate(db);const jobs=new Jobs(db);
+  const wallet=Keypair.generate(),provider=Keypair.generate();
+  const transaction=()=>new VersionedTransaction(new TransactionMessage({payerKey:provider.publicKey,recentBlockhash:Keypair.generate().publicKey.toBase58(),instructions:[SystemProgram.transfer({fromPubkey:wallet.publicKey,toPubkey:provider.publicKey,lamports:1})]}).compileToV0Message());
+  const old=transaction(),replacement=transaction();replacement.sign([provider]);
+  let valid=false,status:any={pack:null,send:null},generations=0;
+  const chain={address:wallet.publicKey.toBase58(),require:()=>({rpc:{isBlockhashValid:async()=>({value:valid})}})} as unknown as Chain;
+  const p=new Providers(chain,jobs);
+  p.cc=async(path)=>{if(path.startsWith('/pack/status'))return status;assert.equal(path,'/generatePack');generations++;return{memo:'replacement-memo',transaction:Buffer.from(replacement.serialize()).toString('base64')};};
+  const original=()=>({tier:25,funded:true,memo:'old-memo',transaction:Buffer.from(old.serialize()).toString('base64')});
+  try{
+    const data=original();await jobs.put('pack:refresh','pack','purchasing',data);
+    valid=true;assert.deepEqual((await p.packPayment('pack:refresh',data,25)).serialize(),old.serialize());assert.equal(generations,0);
+    valid=false;
+    assert.deepEqual((await p.packPayment('pack:refresh',data,25)).serialize(),replacement.serialize());
+    assert.equal(generations,1);assert.equal((await jobs.get('pack:refresh')).data.memo,'replacement-memo');
+    assert.deepEqual((await jobs.get('pack:refresh')).data.previousMemos,['old-memo']);
+    for(const activity of [{pack:{status:'confirmed'},send:null},{pack:{status:null,transaction_signature:'already-paid'},send:null},{pack:null,send:{nft_address:'reserved'}},{}]){
+      status=activity;await assert.rejects(p.packPayment('pack:blocked',original(),25),ReviewRequired);
+    }
+    assert.equal(generations,1);
+    status={pack:null,send:null};await jobs.put('pack:signed:payment','pack-payment','submitted',{signature:'existing',raw:'signed'});
+    await assert.rejects(p.packPayment('pack:signed',original(),25),/Reconcile the existing/);assert.equal(generations,1);
+  }finally{await db.close();}
+});
 test('claims, swaps, payments and transfers persist signatures before sending and reconcile after restart',async()=>{
   const db=await openDatabase(undefined,'memory://');await migrate(db);const jobs=new Jobs(db),signer=Keypair.generate();
   try{

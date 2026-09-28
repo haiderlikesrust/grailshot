@@ -63,9 +63,31 @@ export class Providers {
       const spent=BigInt((await this.jobs.db.query("SELECT COALESCE(SUM(amount_micros),0)::text AS amount FROM ledger WHERE kind='pack' AND created_at>=$1",[day.getTime()])).rows[0].amount);
       if(spent+BigInt(tier)*1_000_000n>BigInt(Math.floor(settings.dailyCapUsd*1e6)))throw new ReviewRequired('Daily spending cap would be exceeded.');
     }
-    if(!d.funded){const price=BigInt(tier)*1_000_000n,usdc=await this.chain.balance(config.USDC_MINT);if(usdc<price){let amount:bigint;const previous=await this.jobs.get(`${id}:usdc`);if(previous){amount=BigInt(previous.data.amount);}else{const cards=await this.chain.balance(config.CARDS_MINT);if(!cards)throw new Error('Insufficient pack funds.');const quote=await this.quote(config.CARDS_MINT,config.USDC_MINT,cards);const needed=price-usdc;amount=(cards*needed*10_000n+BigInt(quote.outAmount)*(10_000n-BigInt(settings.slippageBps))-1n)/(BigInt(quote.outAmount)*(10_000n-BigInt(settings.slippageBps)));if(amount>cards)throw new Error('Pack funds changed; waiting for fees.');}await this.swap(`${id}:usdc`,config.CARDS_MINT,config.USDC_MINT,amount,settings,price-usdc);}d.funded=true;await this.jobs.put(id,'pack','purchasing',d);}
+    // A landed swap can update the wallet before its job is marked confirmed.
+    // Reconcile that same transaction even when the USDC balance already covers the pack.
+    const funding=await this.jobs.get(`${id}:usdc`);
+    if(funding&&funding.status!=='confirmed')await this.swap(`${id}:usdc`,config.CARDS_MINT,config.USDC_MINT,BigInt(funding.data.amount),settings,BigInt(funding.data.minOutput));
+    if(!d.funded){
+      const price=BigInt(tier)*1_000_000n,usdc=await this.chain.balance(config.USDC_MINT);
+      if(usdc<price){
+        if(funding)throw new PendingOperation('Waiting for confirmed swap funds to be available.');
+        const cards=await this.chain.balance(config.CARDS_MINT);if(!cards)throw new Error('Insufficient pack funds.');
+        const quote=await this.quote(config.CARDS_MINT,config.USDC_MINT,cards),needed=price-usdc;
+        const amount=(cards*needed*10_000n+BigInt(quote.outAmount)*(10_000n-BigInt(settings.slippageBps))-1n)/(BigInt(quote.outAmount)*(10_000n-BigInt(settings.slippageBps)));
+        if(amount>cards)throw new Error('Pack funds changed; waiting for fees.');
+        await this.swap(`${id}:usdc`,config.CARDS_MINT,config.USDC_MINT,amount,settings,needed);
+        if(await this.chain.balance(config.USDC_MINT)<price)throw new PendingOperation('Waiting for confirmed swap funds to be available.');
+      }
+      d.funded=true;await this.jobs.put(id,'pack','purchasing',d);
+    }
     if(!d.memo){const order=await this.cc('/generatePack',{playerAddress:this.chain.address,packType:`pokemon_${tier}`,turbo:false});if(!order.memo||!order.transaction)throw new Error('Invalid pack purchase response.');d.memo=order.memo;d.transaction=order.transaction;await this.jobs.put(id,'pack','purchasing',d);}
-    if(!d.paymentSignature){d.paymentSignature=await this.chain.execute(`${id}:payment`,'pack-payment',async()=>VersionedTransaction.deserialize(Buffer.from(d.transaction,'base64')),settings,{kind:'pack',inputMint:config.USDC_MINT,maxInput:BigInt(tier)*1_000_000n,minInput:BigInt(tier)*1_000_000n,recipient:PACK_WALLET,memo:d.memo,allowedPrograms:[TOKEN_PROGRAM_ID.toBase58(),ASSOCIATED_TOKEN_PROGRAM_ID.toBase58(),SystemProgram.programId.toBase58(),ComputeBudgetProgram.programId.toBase58(),'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr','Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo']});await this.jobs.put(id,'pack','opening',d);}
+    if(!d.paymentSignature){
+      const policy:TxPolicy={kind:'pack',inputMint:config.USDC_MINT,maxInput:BigInt(tier)*1_000_000n,minInput:BigInt(tier)*1_000_000n,recipient:PACK_WALLET,memo:d.memo,allowedPrograms:[TOKEN_PROGRAM_ID.toBase58(),ASSOCIATED_TOKEN_PROGRAM_ID.toBase58(),SystemProgram.programId.toBase58(),ComputeBudgetProgram.programId.toBase58(),'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr','Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo']};
+      d.paymentSignature=await this.chain.execute(`${id}:payment`,'pack-payment',async()=>{
+        const tx=await this.packPayment(id,d,tier);policy.memo=d.memo;return tx;
+      },settings,policy);
+      await this.jobs.put(id,'pack','opening',d);
+    }
     await this.jobs.db.query("INSERT INTO ledger(id,kind,amount_micros,signature,created_at) VALUES($1,'pack',$2,$3,$4) ON CONFLICT(id) DO NOTHING",[id,tier*1_000_000,d.paymentSignature,Date.now()]);
     const status=await this.cc(`/pack/status?memo=${encodeURIComponent(d.memo)}`);if(status.pack?.refunded){await this.jobs.db.query("INSERT INTO ledger(id,kind,amount_micros,signature,created_at) VALUES($1,'refund',$2,$3,$4) ON CONFLICT(id) DO NOTHING",[`${id}:refund`,tier*1_000_000,status.pack.refund_transaction_signature,Date.now()]);throw new ReviewRequired('This pack was refunded. Owner recovery is required.');}
     if(!d.opened){const opened=await this.cc('/openPack',{memo:d.memo});if(opened.code==='WAITING_FOR_WEBHOOK'||!opened.nft_address)throw new PendingOperation('Waiting for the pack provider to confirm the payment.');if(opened.code==='TURBO_MODE_BUYBACK')throw new ReviewRequired('Unexpected automatic buyback.');d.opened=opened;await this.jobs.put(id,'pack','verifying',d);}
@@ -75,5 +97,23 @@ export class Providers {
     const insured=Number(status.send?.insured_value??meta.attributes?.find((a:any)=>/insured.?value/i.test(a.trait_type))?.value??0);
     const prize:Prize={id:randomUUID(),mint:d.opened.nft_address,name:meta.name??card?.name??'Pokémon collectible',image:typeof image==='string'&&image.startsWith('https://')?image:'/brand/grailshot-pack-v6-720.webp',value:Number.isFinite(insured)?insured:0,rarity:d.opened.rarity??'Unrated',purchaseSignature:d.paymentSignature};
     await this.jobs.db.query("INSERT INTO prizes(id,mint,data,status) VALUES($1,$2,$3,'available') ON CONFLICT(mint) DO NOTHING",[prize.id,prize.mint,JSON.stringify(prize)]);const stored=(await this.jobs.db.query('SELECT data FROM prizes WHERE mint=$1',[prize.mint])).rows[0].data;d.prize=stored;await this.jobs.put(id,'pack','complete',d);return stored;
+  }
+  async packPayment(id:string,data:any,tier:number){
+    const tx=VersionedTransaction.deserialize(Buffer.from(data.transaction,'base64'));
+    const payment=await this.jobs.get(`${id}:payment`);
+    if(payment?.data.raw||payment?.data.signature)throw new ReviewRequired('Reconcile the existing pack payment before refreshing it.');
+    const{rpc}=this.chain.require();
+    if((await rpc.isBlockhashValid(tx.message.recentBlockhash,{commitment:'confirmed'})).value)return tx;
+    // The treasury has never signed this order. Confirm that the provider has no
+    // payment or award before replacing its expired, partially signed message.
+    const status=await this.cc(`/pack/status?memo=${encodeURIComponent(data.memo)}`);
+    if(!status||!('pack' in status)||!('send' in status))throw new ReviewRequired('Pack status could not be verified before refreshing payment.');
+    if(status.pack&&(status.pack.status!==null||status.pack.transaction_signature||status.pack.webhook_received||status.pack.refunded)||status.send)throw new ReviewRequired('Provider has activity for the existing pack. Reconcile it before creating another payment.');
+    const order=await this.cc('/generatePack',{playerAddress:this.chain.address,packType:`pokemon_${tier}`,turbo:false});
+    if(!order.memo||!order.transaction)throw new Error('Invalid refreshed pack response.');
+    const replacement=VersionedTransaction.deserialize(Buffer.from(order.transaction,'base64'));
+    data.previousMemos=[...(data.previousMemos??[]),data.memo];data.memo=order.memo;data.transaction=order.transaction;
+    await this.jobs.put(id,'pack','purchasing',data);
+    return replacement;
   }
 }

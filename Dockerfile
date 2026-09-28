@@ -2,6 +2,7 @@
 FROM node:22-bookworm-slim AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY vendor/bigint-buffer ./vendor/bigint-buffer
 RUN npm ci --no-audit --no-fund
 
 FROM dependencies AS web-build
@@ -26,6 +27,7 @@ COPY --from=server-dependencies --chown=node:node /app/node_modules ./node_modul
 COPY --chown=node:node package.json tsconfig.json ./
 COPY --chown=node:node server ./server
 COPY --chown=node:node shared ./shared
+COPY --chown=node:node vendor/bigint-buffer ./vendor/bigint-buffer
 USER node
 EXPOSE 4100
 CMD ["node", "--import", "tsx", "server/index.ts"]

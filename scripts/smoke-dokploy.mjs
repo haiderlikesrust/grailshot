@@ -12,11 +12,19 @@ const health = await (await fetch(`${base}/api/health`)).json();
 assert.equal(health.ok, true);
 assert.equal(health.database, 'postgres');
 assert.equal(health.spendingEnabled, false);
-for (const path of ['/', '/leaderboard', '/profile', '/admin', '/fonts/fonts.css', '/favicon.svg', '/brand/grailshot-wordmark-v3.png']) {
+for (const path of ['/', '/leaderboard', '/profile', '/admin', '/fonts/fonts-v2.css', '/fonts/space-grotesk-700-v1.woff2', '/favicon.svg', '/brand/grailshot-wordmark-v5.webp', '/brand/grailshot-pack-v5.svg']) {
   const response = await fetch(base + path);
   assert.equal(response.status, 200, path);
   assert.ok((await response.arrayBuffer()).byteLength, path);
 }
+const artwork = await fetch(base + '/brand/grailshot-pack-v5.svg', { headers: { 'accept-encoding': 'gzip' } });
+assert.equal(artwork.headers.get('content-encoding'), 'gzip', 'Gateway compresses SVG assets');
+assert.match(artwork.headers.get('cache-control'), /max-age=604800/, 'Public assets are cached');
+assert.ok((await artwork.arrayBuffer()).byteLength < 10_000, 'Pack stays under its performance budget');
+const homepage = await fetch(base);
+assert.equal(homepage.headers.get('x-frame-options'), 'DENY');
+assert.match(homepage.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+assert.match(await homepage.text(), /https:\/\/x.com\/grailshotxyz/);
 const request = async (path, body) => {
   const response = await fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json', origin }, body: JSON.stringify(body) });
   assert.equal(response.status, 200, path);

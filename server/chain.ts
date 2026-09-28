@@ -7,13 +7,14 @@ import type { Eligibility, Settings } from '../shared/types';
 import { Jobs, PendingOperation, ReviewRequired } from './jobs';
 import { MPL_CORE_PROGRAM_ID } from '@metaplex-foundation/mpl-core';
 import { treasurySigner } from './treasury-signer';
+import { validatePackPayment } from './pack-policy';
 export const CORE_PROGRAM=MPL_CORE_PROGRAM_ID;
-export type TxPolicy={kind:'swap'|'pack'|'internal';inputMint?:string;maxInput?:bigint;minInput?:bigint;outputMint?:string;minOutput?:bigint;allowedPrograms?:string[];recipient?:string};
+export type TxPolicy={kind:'swap'|'pack'|'internal';inputMint?:string;maxInput?:bigint;minInput?:bigint;outputMint?:string;minOutput?:bigint;allowedPrograms?:string[];recipient?:string;memo?:string};
 export class Chain {
   readonly connection:Connection|null;
   signer:Keypair|null=null;
   rpc={ok:false,latency:null as number|null,checkedAt:null as number|null};
-  constructor(readonly jobs:Jobs){this.connection=config.SOLANA_RPC_URL?new Connection(config.SOLANA_RPC_URL,{commitment:'confirmed',confirmTransactionInitialTimeout:20_000,disableRetryOnRateLimit:true}):null;}
+  constructor(readonly jobs:Jobs){this.connection=config.SOLANA_RPC_URL?new Connection(config.SOLANA_RPC_URL,{commitment:'confirmed',confirmTransactionInitialTimeout:20_000,disableRetryOnRateLimit:true,fetch:(url,init)=>fetch(url,{...init,signal:AbortSignal.any([...(init?.signal?[init.signal as AbortSignal]:[]),AbortSignal.timeout(8000)])})}):null;}
   async init(){this.signer=treasurySigner(config.TREASURY_PRIVATE_KEY);}
   get address(){return this.signer?.publicKey.toBase58()??null;}
   require(){if(!config.live||!this.connection||!this.signer)throw new Error('Mainnet signing is disabled or not configured.');return{rpc:this.connection,signer:this.signer};}
@@ -28,14 +29,16 @@ export class Chain {
   async build(instructions:TransactionInstruction[]){const{rpc,signer}=this.require();const block=await rpc.getLatestBlockhash('confirmed');return new VersionedTransaction(new TransactionMessage({payerKey:signer.publicKey,recentBlockhash:block.blockhash,instructions}).compileToV0Message());}
   async validateExternal(tx:VersionedTransaction,policy:TxPolicy,settings:Settings){
     const {rpc,signer}=this.require();
-    if(policy.kind==='pack'&&!policy.recipient)throw new ReviewRequired('Configure the verified Collector Crypt payment wallet before purchasing.');
+    if(policy.kind==='pack'){
+      if(!policy.recipient||!policy.memo||policy.inputMint!==config.USDC_MINT||policy.minInput!==policy.maxInput)throw new ReviewRequired('Configure and verify the complete pack payment intent.');
+      validatePackPayment(tx,signer.publicKey,new PublicKey(policy.recipient),new PublicKey(config.USDC_MINT),policy.maxInput!,policy.memo);
+    }
     const lookups=await Promise.all(tx.message.addressTableLookups.map(async l=>{const table=await rpc.getAddressLookupTable(l.accountKey);if(!table.value)throw new Error('Missing transaction address table.');return table.value;}));
     const message=TransactionMessage.decompile(tx.message,{addressLookupTableAccounts:lookups});
-    if(!message.payerKey.equals(signer.publicKey))throw new Error('Transaction fee payer does not match the treasury.');
+    if(policy.kind!=='pack'&&!message.payerKey.equals(signer.publicKey))throw new Error('Transaction fee payer does not match the treasury.');
     const programs=new Set(policy.allowedPrograms??[]);
     for(const ix of message.instructions){
       const program=ix.programId.toBase58();if(programs.size&&!programs.has(program))throw new ReviewRequired(`Unexpected transaction program ${program}`);
-      if(ix.keys.some(k=>k.isSigner&&!k.pubkey.equals(signer.publicKey))&&policy.kind==='pack')throw new ReviewRequired('Pack requests an unexpected signer.');
       if([TOKEN_PROGRAM_ID.toBase58(),TOKEN_2022_PROGRAM_ID.toBase58()].includes(program)&&![3,9,12,17].includes(ix.data[0]))throw new ReviewRequired('Unexpected token authority operation.');
     }
     // Simulate every existing treasury token account and both expected ATAs. This checks
@@ -52,6 +55,8 @@ export class Chain {
     for(let i=1;i<addresses.length;i++){
       const old=before[i]?.data,newBytes=after[i]?.data?.[0]?Buffer.from(after[i]!.data[0],'base64'):null;
       const a=old&&old.length>=165?AccountLayout.decode(old):null,b=newBytes&&newBytes.length>=165?AccountLayout.decode(newBytes):null;
+      if(a&&b&&!a.mint.equals(b.mint))throw new ReviewRequired('Treasury token mint changed.');
+      if(before[i]&&after[i]&&before[i]!.owner.toBase58()!==after[i]!.owner)throw new ReviewRequired('Treasury token program changed.');
       if(b&&(!b.owner.equals(signer.publicKey)||b.delegateOption!==a?.delegateOption&&b.delegateOption!==0||b.closeAuthorityOption!==a?.closeAuthorityOption&&b.closeAuthorityOption!==0))throw new ReviewRequired('Treasury ownership or authority changed.');
       if(a&&b&&(a.delegateOption!==b.delegateOption||!a.delegate.equals(b.delegate)||a.closeAuthorityOption!==b.closeAuthorityOption||!a.closeAuthority.equals(b.closeAuthority)))throw new ReviewRequired('Treasury token authority changed.');
       const mint=(a?.mint??b?.mint)?.toBase58();if(mint)deltas.set(mint,(deltas.get(mint)??0n)+(b?.amount??0n)-(a?.amount??0n));
@@ -61,7 +66,6 @@ export class Chain {
     for(const[mint,delta]of deltas){if(delta<0n&&(mint!==policy.inputMint||-delta>(policy.maxInput??0n)))throw new ReviewRequired('Unexpected treasury token debit.');}
     if(policy.inputMint&&policy.inputMint!==NATIVE_MINT.toBase58()&&-(deltas.get(policy.inputMint)??0n)<(policy.minInput??0n))throw new ReviewRequired('Payment amount does not match the pack.');
     if(policy.outputMint&&(deltas.get(policy.outputMint)??0n)<(policy.minOutput??0n))throw new ReviewRequired('Swap output is below the minimum.');
-    if(policy.kind==='pack'&&policy.recipient){const destination=getAssociatedTokenAddressSync(new PublicKey(config.USDC_MINT),new PublicKey(policy.recipient)).toBase58();if(!message.instructions.some(ix=>ix.programId.equals(TOKEN_PROGRAM_ID)&&[3,12].includes(ix.data[0])&&ix.keys.some(k=>k.pubkey.toBase58()===destination)))throw new ReviewRequired('Pack payment recipient mismatch.');}
   }
   async execute(id:string,kind:string,build:()=>Promise<VersionedTransaction>,settings:Settings,policy:TxPolicy={kind:'internal'}){
     const{rpc,signer}=this.require();let job=await this.jobs.get(id);

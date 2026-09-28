@@ -5,11 +5,20 @@ import { config } from './config';
 export interface Database { query<T = Record<string, any>>(sql: string, params?: any[]): Promise<{ rows: T[] }>; close(): Promise<void>; }
 export async function openDatabase(url = config.DATABASE_URL, directory = '.data/postgres'): Promise<Database> {
   if (url) {
-    const pool = new pg.Pool({ connectionString: url, max: 1 });
+    const client = new pg.Client({ connectionString: url, connectionTimeoutMillis: 8000, query_timeout: 15000 });
+    let connected = false;
+    client.on('error', () => { connected = false; });
+    await client.connect();
     // One durable coordinator owns all game and financial transitions.
-    const lock = await pool.query('SELECT pg_try_advisory_lock(713531922) AS acquired');
-    if (!lock.rows[0].acquired) { await pool.end(); throw new Error('Another GRAILSHOT coordinator is already running.'); }
-    return { query: async <T>(sql: string, params?: any[]) => ({ rows: (await pool.query(sql, params)).rows as T[] }), close: () => pool.end() };
+    const lock = await client.query('SELECT pg_try_advisory_lock(713531922) AS acquired');
+    if (!lock.rows[0].acquired) { await client.end(); throw new Error('Another GRAILSHOT coordinator is already running.'); }
+    connected = true;
+    // A pool can silently reconnect without owning the session advisory lock.
+    // Stop all state changes after connection loss; restart and reconcile instead.
+    return { query: async <T>(sql: string, params?: any[]) => {
+      if (!connected) throw new Error('Database coordinator connection lost. Restart to reconcile.');
+      return { rows: (await client.query(sql, params)).rows as T[] };
+    }, close: async () => { connected = false; await client.end(); } };
   }
   if (directory !== 'memory://') await mkdir(directory, { recursive: true });
   const database = new PGlite(directory);
@@ -37,8 +46,11 @@ export async function migrate(db: Database) {
 }
 export class Serial {
   private tail: Promise<unknown> = Promise.resolve();
+  private pending = 0;
   run<T>(fn: () => Promise<T>): Promise<T> {
-    const next = this.tail.then(fn, fn); this.tail = next.catch(() => {}); return next;
+    if (this.pending >= 256) return Promise.reject(Object.assign(new Error('The arena is busy. Try again shortly.'), { statusCode: 503 }));
+    this.pending++;
+    const next = this.tail.then(fn, fn).finally(() => { this.pending--; }); this.tail = next.catch(() => {}); return next;
   }
 }
 export async function atomic<T>(db: Database, fn: () => Promise<T>) { await db.query('BEGIN'); try { const result = await fn(); await db.query('COMMIT'); return result; } catch (error) { await db.query('ROLLBACK'); throw error; } }

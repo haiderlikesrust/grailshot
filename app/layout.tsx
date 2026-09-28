@@ -19,7 +19,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <head><link rel="stylesheet" href="/fonts/fonts.css" /></head>
+      <head>
+        <meta name="theme-color" content="#131510" />
+        <link rel="preload" href="/fonts/space-grotesk-400-v1.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
+        <link rel="preload" href="/fonts/space-grotesk-700-v1.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
+        <link rel="stylesheet" href="/fonts/fonts-v2.css" />
+      </head>
       <body className="antialiased">{children}</body>
     </html>
   );

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 510" fill="none">
+<title>GRAILSHOT Electric Series sealed pack</title>
+<defs>
+<linearGradient id="foil" x1="37" y1="90" x2="324" y2="450" gradientUnits="userSpaceOnUse"><stop stop-color="#fff4a9"/><stop offset=".18" stop-color="#ffe052"/><stop offset=".65" stop-color="#f4c82e"/><stop offset=".9" stop-color="#ffea79"/><stop offset="1" stop-color="#c9910d"/></linearGradient>
+<linearGradient id="ink" x1="90" y1="120" x2="250" y2="420" gradientUnits="userSpaceOnUse"><stop stop-color="#34372f"/><stop offset=".5" stop-color="#23271f"/><stop offset="1" stop-color="#191d17"/></linearGradient>
+<linearGradient id="shine"><stop stop-color="#fff" stop-opacity=".3"/><stop offset=".2" stop-color="#fff" stop-opacity="0"/><stop offset=".8" stop-color="#000" stop-opacity=".04"/><stop offset="1" stop-color="#fff" stop-opacity=".23"/></linearGradient>
+<pattern id="crimp" width="7" height="22" patternUnits="userSpaceOnUse"><path d="M1 0v22M3 0v22" stroke="#10140f" stroke-opacity=".7"/><path d="M5 0v22" stroke="#9b977e" stroke-opacity=".3"/></pattern>
+<pattern id="dots" width="12" height="12" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="#ffe052" opacity=".09"/></pattern>
+</defs>
+<path d="M28 14 333 14 322 53 325 455 337 493 24 493 36 455 39 53Z" fill="#1c211b" stroke="#898571" stroke-width="2"/>
+<path d="M39 48h282v414H36Z" fill="url(#foil)"/>
+<path d="M40 146 321 91v301L36 447Z" fill="url(#ink)"/>
+<path d="M40 153 321 98v293L36 438Z" fill="url(#dots)"/>
+<path d="m39 145 282-55v10L39 155Z" fill="#9d822a"/><path d="m36 437 285-55v11L36 448Z" fill="#9d822a"/>
+<path d="M53 59h31m-31 0v29m253-29h-31m31 0v29" stroke="#30352b" stroke-width="2"/>
+<g transform="translate(64 110) scale(0.04547244094488189)" fill="#22231f"><path d="M305.9 14Q233.9 14 180.275 -18.5Q126.65 -51 101.525 -113.5Q76.4 -176 89.9 -266L115.1 -434Q135.35 -569 222.22500000000002 -641.5Q309.1 -714 439.1 -714Q568.1 -714 628.325 -645.5Q688.55 -577 671.0 -460L670.4 -456H540.4L541.6 -464Q547.15 -501 536.15 -531.0Q525.15 -561 496.775 -578.5Q468.4 -596 421.4 -596Q351.4 -596 304.95 -553.0Q258.5 -510 247.39999999999998 -436L221.6 -264Q210.65 -191 243.97500000000002 -146.5Q277.3 -102 349.3 -102Q421.3 -102 460.0 -140.0Q498.7 -178 507.4 -236L508.9 -246H342.9L359.7 -358H655.7L602.0 0H480.0L490.05 -67H472.05Q462.5 -50 444.15 -31.0Q425.8 -12 392.85 1.0Q359.9 14 305.9 14ZM708.0 0 813.0 -700H1117.0Q1183.0 -700 1228.55 -677.0Q1274.1 -654 1294.8 -612.0Q1315.5 -570 1306.95 -513L1305.15 -501Q1295.7 -438 1259.85 -399.0Q1224.0 -360 1177.3 -342L1174.6 -324Q1214.3 -322 1232.475 -296.5Q1250.65 -271 1244.35 -229L1210.0 0H1078.0L1109.5 -210Q1113.1 -234 1102.85 -249.0Q1092.6 -264 1063.6 -264H879.6L840.0 0ZM897.6 -384H1055.6Q1102.6 -384 1132.925 -409.5Q1163.25 -435 1169.55 -477L1171.05 -487Q1177.35 -529 1155.175 -554.5Q1133.0 -580 1085.0 -580H927.0ZM1272.0 0 1561.0 -700H1791.0L1870.0 0H1734.0L1719.1 -154H1469.1L1408.0 0ZM1518.4 -276H1706.4L1672.55 -617H1654.55ZM1934.0 0 2039.0 -700H2171.0L2066.0 0ZM2178.0 0 2283.0 -700H2415.0L2328.0 -120H2648.0L2630.0 0ZM2940.9 14Q2859.9 14 2802.25 -15.0Q2744.6 -44 2717.7 -98.0Q2690.8 -152 2702.2 -228L2706.4 -256H2836.4L2832.2 -228Q2822.75 -165 2857.025 -133.5Q2891.3 -102 2958.3 -102Q3026.3 -102 3063.8500000000004 -129.0Q3101.4 -156 3107.7 -198Q3112.05 -227 3098.25 -245.0Q3084.45 -263 3054.675 -274.5Q3024.9 -286 2981.4 -296L2959.15 -301Q2889.55 -317 2841.7250000000004 -341.5Q2793.9 -366 2772.4 -406.0Q2750.9 -446 2760.5 -510Q2770.1 -574 2807.425 -619.5Q2844.75 -665 2903.925 -689.5Q2963.1 -714 3038.1 -714Q3113.1 -714 3167.7749999999996 -688.5Q3222.45 -663 3248.375 -612.5Q3274.3 -562 3262.9 -486L3258.4 -456H3128.4L3132.9 -486Q3138.9 -526 3127.075 -550.5Q3115.25 -575 3087.975 -586.5Q3060.7 -598 3020.7 -598Q2960.7 -598 2928.825 -575.5Q2896.95 -553 2891.1 -514Q2887.2 -488 2898.0 -470.0Q2908.8 -452 2934.0 -440.0Q2959.2 -428 2999.85 -419L3022.1 -414Q3094.7 -398 3146.45 -373.0Q3198.2 -348 3223.05 -307.0Q3247.9 -266 3238.3 -202Q3228.7 -138 3188.925 -89.5Q3149.15 -41 3085.525 -13.5Q3021.9 14 2940.9 14ZM3286.0 0 3391.0 -700H3523.0L3479.65 -411H3739.65L3783.0 -700H3915.0L3810.0 0H3678.0L3721.65 -291H3461.65L3418.0 0ZM4191.9 14Q4059.9 14 3992.775 -58.5Q3925.65 -131 3945.9 -266L3971.1 -434Q3991.35 -569 4080.2250000000004 -641.5Q4169.1 -714 4301.1 -714Q4433.1 -714 4500.225 -641.5Q4567.35 -569 4547.1 -434L4521.9 -266Q4501.65 -131 4412.775 -58.5Q4323.9 14 4191.9 14ZM4209.6 -104Q4283.6 -104 4331.05 -147.0Q4378.5 -190 4389.3 -262L4415.7 -438Q4426.5 -510 4391.95 -553.0Q4357.4 -596 4283.4 -596Q4210.4 -596 4162.45 -553.0Q4114.5 -510 4103.7 -438L4077.3 -262Q4066.5 -190 4101.55 -147.0Q4136.6 -104 4209.6 -104ZM4740.0 0 4827.0 -580H4623.0L4641.0 -700H5181.0L5163.0 -580H4959.0L4872.0 0Z"/></g>
+<text x="181" y="132" fill="#30352b" font-family="Arial,sans-serif" font-weight="700" font-size="8" letter-spacing="4" text-anchor="middle">E L E C T R I C   S E R I E S</text>
+<g transform="rotate(-8 180 265)">
+<rect x="122" y="181" width="118" height="168" rx="15" fill="#ffe052"/>
+<rect x="130" y="189" width="102" height="152" rx="10" stroke="#24291d" stroke-width="3"/>
+<circle cx="181" cy="265" r="38" stroke="#24291d" stroke-width="7" stroke-dasharray="49 11" transform="rotate(-38 181 265)"/>
+<path d="M181 213v17m0 70v17m-53-52h18m70 0h18" stroke="#24291d" stroke-width="7" stroke-linecap="round"/>
+<path d="M181 243c4 13 9 18 22 22-13 4-18 9-22 22-4-13-9-18-22-22 13-4 18-9 22-22Z" fill="#24291d"/>
+</g>
+<path d="m269 155 3 12 12 3-12 3-3 12-3-12-12-3 12-3Zm-181 189 3 12 12 3-12 3-3 12-3-12-12-3 12-3Z" fill="#ffe052"/>
+<path d="m66 213 16-3m-13 9 16-3m174 91 29-6m-26 13 29-6" stroke="#8e957a" stroke-width="2"/>
+<text x="180" y="385" transform="rotate(-11 180 385)" fill="#ffe780" font-family="Arial,sans-serif" font-weight="700" font-size="12" letter-spacing="3" text-anchor="middle">HOLD. AIM. WIN.</text>
+<text x="180" y="426" fill="#22231f" font-family="Arial,sans-serif" font-weight="700" font-size="9" letter-spacing="2" text-anchor="middle">YOUR NEXT GRAIL AWAITS</text>
+<path d="M33 18h293v25H33Zm-3 450h301v38H30Z" fill="url(#crimp)"/>
+<path d="M38 49h283M36 445h289" stroke="#10140f" stroke-opacity=".45"/>
+<path d="M43 54h271v384H39Z" fill="url(#shine)"/>
+<path d="M44 53 40 436M312 54l6 384" stroke="#fff" stroke-opacity=".2"/>
+</svg>

@@ -22,7 +22,7 @@ The GitHub workflow builds the actual Linux Docker stack with PostgreSQL and che
 
 ## Asset delivery
 
-The initial logo and pack payload fell from about 3.08 MB to about 36 KB. The logo uses WebP with alpha and the pack uses SVG. Fonts use local WOFF2 subsets. The 20 KB practice card only loads when practice starts. Full-resolution generated brand artwork lives in assets/brand and is not served on the homepage.
+The initial logo and pack payload fell from about 3.08 MB to about 65–146 KB, depending on the responsive pack size selected by the browser. Both use WebP with alpha; the pack retains realistic 3D foil artwork and the current logo. Fonts use local WOFF2 subsets. The 20 KB practice card only loads when practice starts. Full-resolution generated brand artwork lives in assets/brand and is not served on the homepage.
 
 ## Remaining limits
 

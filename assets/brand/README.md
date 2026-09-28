@@ -6,5 +6,6 @@ Palette: charcoal, warm ivory and electric yellow. Generated raster assets use t
 - `grailshot-x-banner-master.png`: full-resolution banner source; see `banner-prompt.txt`.
 - `grailshot-avatar-1x1.png`: square, text-only social avatar; see `avatar-prompt.txt`.
 - `grailshot-logo-master.png`: transparent horizontal logo source; see `logo-prompt.txt`.
+- `grailshot-pack-v6-master.png`: realistic sealed foil pack using the approved logo; see `pack-v6-prompt.txt`.
 
-The site serves the optimized `public/brand/grailshot-wordmark-v5.webp`, vector `grailshot-pack-v5.svg` and `grailshot-mark-v5.svg`. Master artwork is excluded from Docker builds and is not loaded on the website. `scripts/build-brand.py` rebuilds the vector pack/mark and local font subsets; it does not regenerate the ImageGen artwork.
+The site serves `public/brand/grailshot-wordmark-v5.webp`, responsive `grailshot-pack-v6-360.webp` / `grailshot-pack-v6-720.webp`, and the vector `grailshot-mark-v5.svg`. The pack has genuine alpha transparency; its two WebP copies are 35 KB and 116 KB. Master artwork is excluded from Docker builds and is not loaded on the website. `scripts/build-brand.py` rebuilds the legacy vector pack, current mark and local font subsets; it does not regenerate the ImageGen artwork.

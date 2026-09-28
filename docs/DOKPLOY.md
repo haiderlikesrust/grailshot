@@ -23,6 +23,8 @@ Keep `MAINNET_ENABLED=false` until the mint, treasury recipient/key, RPC, Jupite
 
 ## Redeployments and storage
 
+For a code or artwork update, open the existing GRAILSHOT Compose service, keep branch `main` and Compose Path `./compose.dokploy.yaml`, and click **Deploy** in **General**. Follow the new record in **Deployments** until the build succeeds and the services are healthy, then refresh the public site. The branding update requires no new environment variables or domain changes. Asset filenames are versioned so the new images do not reuse the old browser-cache entries. See [Dokploy's Compose deployment controls](https://docs.dokploy.com/docs/core/docker-compose).
+
 Run **one game container**. It holds the authoritative timers and WebSocket players; PostgreSQL's advisory lock prevents a second coordinator. Do not enable parallel game replicas, rolling overlap or blue/green coordinators. Pause the treasury in `/admin` and let a current round settle before a planned redeploy. An interruption requeues an active prize; incomplete contests never choose a winner.
 
 The project-scoped `grailshot-postgres` named volume persists accounts, sessions, matches, awards and recoverable transactions. Keep the same Dokploy project/Compose identity across redeployments. Configure database backups (for example `pg_dump`) before launch and test restores. Do not remove the volume when updating, and do not change `POSTGRES_PASSWORD` on an existing volume without also changing the database role's password.

@@ -38,7 +38,13 @@ export const DEFAULT_CADENCE: CadenceSettings = { fastRate: 1500, fastBalance: 6
 export function cadence(rate: number, available: number, settings = DEFAULT_CADENCE) {
   return rate >= settings.fastRate || available >= settings.fastBalance ? 60_000 : rate >= settings.mediumRate || available >= settings.mediumBalance ? 300_000 : 600_000;
 }
-export function selectPack(availableMicros: bigint, dailyRemainingMicros: bigint, tiers: number[]) {
-  return [100, 50, 25].find(price => tiers.includes(price) && BigInt(price) * 1_000_000n <= availableMicros && BigInt(price) * 1_000_000n <= dailyRemainingMicros) ?? null;
+export const PACK_TIERS = [25, 50, 100, 500] as const;
+export function selectPack(availableMicros: bigint, dailyRemainingMicros: bigint | null, tiers: number[], paidPacks=0) {
+  // Use confirmed funds only. Small treasuries preserve the number of games;
+  // larger ones rotate through five $25, three $50 and two $100 rounds.
+  const cycle=[25,50,25,100,25,50,25,100,50,25];
+  const slot=Math.max(0,Math.floor(paidPacks))%cycle.length;
+  const preferred=availableMicros>=10_000_000_000n&&slot===9?500:availableMicros>=500_000_000n?cycle[slot]:25;
+  return [...PACK_TIERS].reverse().find(price=>price<=preferred&&tiers.includes(price)&&BigInt(price)*1_000_000n<=availableMicros&&(dailyRemainingMicros===null||BigInt(price)*1_000_000n<=dailyRemainingMicros))??null;
 }
 export const shortWallet = (wallet = "") => wallet.length > 12 ? `${wallet.slice(0, 4)}…${wallet.slice(-4)}` : wallet;

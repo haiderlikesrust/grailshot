@@ -158,13 +158,20 @@ test('WebSocket origins, concurrent tab limits, message floods and expired sessi
     assert.equal((await service.app.inject({ method: 'PATCH', url: '/api/me', headers: { cookie, origin: 'https://evil.test' }, payload: { name: 'attacker' } })).statusCode, 403);
     await db.query('UPDATE sessions SET expires_at=0');
     const valid = sockets[1];
-    const error = new Promise<string>(resolve => valid.on('message', bytes => { const packet = JSON.parse(bytes.toString()); if (packet.type === 'error') resolve(packet.message); }));
+    const error = new Promise<string>((resolve,reject) => {const timeout=setTimeout(()=>reject(new Error('Shot rejection timed out')),3000);valid.on('message', bytes => { const packet = JSON.parse(bytes.toString()); if (packet.type === 'shot-result'&&!packet.accepted){clearTimeout(timeout);resolve(packet.message);} });});
     valid.send(JSON.stringify({ type: 'shot', roundId: randomUUID(), targetId: randomUUID(), x: 500, y: 200 }));
     assert.match(await error, /session expired/);
     const flood = open(); await new Promise(resolve => flood.once('open', resolve)); const stopped = closed(flood);
     for (let i = 0; i < 40; i++) flood.send(JSON.stringify({ type: 'ping', id: String(i) }));
     assert.equal(await stopped, 1008);
   } finally { sockets.forEach(ws => ws.terminate()); await service.app.close(); }
+});
+
+test('$500 surprise payments require the exact approved amount and recipient',()=>{
+  const f=fixture();
+  f.instructions[2]=createTransferCheckedInstruction(getAssociatedTokenAddressSync(mint,f.treasury.publicKey),mint,getAssociatedTokenAddressSync(mint,f.provider.publicKey),f.treasury.publicKey,500_000_000n,6);
+  validatePackPayment(f.build(),f.treasury.publicKey,f.provider.publicKey,mint,500_000_000n,f.memo);
+  assert.throws(()=>validatePackPayment(f.build(),f.treasury.publicKey,f.provider.publicKey,mint,100_000_000n,f.memo),ReviewRequired);
 });
 
 test('suspicious fast shots below the old perfect-score threshold are held for review', async () => {

@@ -70,22 +70,38 @@ export class Chain {
   async execute(id:string,kind:string,build:()=>Promise<VersionedTransaction>,settings:Settings,policy:TxPolicy={kind:'internal'}){
     const{rpc,signer}=this.require();let job=await this.jobs.get(id);
     if(job?.status==='confirmed')return job.data.signature as string;
-    if(job?.status==='failed')throw new ReviewRequired(job.error||'Transaction failed. Owner recovery is required.');
+    if(job?.status==='failed'){
+      if(!job.data.automaticRetry||!job.data.signature)throw new ReviewRequired(job.error||'Transaction needs review.');
+      if(Date.now()-Number(job.updated_at)<30_000)throw new PendingOperation('Retrying the failed transaction after reconciliation.');
+      await this.recover(id);job=await this.jobs.get(id);
+      if(job.status==='confirmed')return job.data.signature as string;
+      if(job.status!=='retryable')throw new PendingOperation('Waiting for the previous transaction to settle.');
+    }
     if(!job?.data.raw){
       const tx=await build();if(policy.kind!=='internal')await this.validateExternal(tx,policy,settings);
       tx.sign([signer]);const signature=bs58.encode(tx.signatures[0]);const data={...(job?.data??{}),raw:Buffer.from(tx.serialize()).toString('base64'),signature,blockhash:tx.message.recentBlockhash};
       await this.jobs.put(id,kind,'prepared',data);job=await this.jobs.get(id);
     }
     const data=job.data;const status=(await rpc.getSignatureStatuses([data.signature],{searchTransactionHistory:true})).value[0];
-    if(status?.err){await this.jobs.put(id,kind,'failed',data,JSON.stringify(status.err));throw new ReviewRequired('Transaction failed on-chain.');}
+    if(status?.err){if(!['confirmed','finalized'].includes(status.confirmationStatus??''))throw new PendingOperation('Waiting for the failed transaction to reach confirmation.');await this.jobs.put(id,kind,'failed',{...data,automaticRetry:true},JSON.stringify(status.err));throw new PendingOperation('Transaction failed on-chain; automatic recovery is scheduled.');}
     if(status?.confirmationStatus==='confirmed'||status?.confirmationStatus==='finalized'){await this.jobs.put(id,kind,'confirmed',data);return data.signature as string;}
     const valid=await rpc.isBlockhashValid(data.blockhash,{commitment:'confirmed'});
-    if(!valid.value&&!status){const landed=await rpc.getTransaction(data.signature,{maxSupportedTransactionVersion:0,commitment:'confirmed'});if(landed&&!landed.meta?.err){await this.jobs.put(id,kind,'confirmed',data);return data.signature as string;}await this.jobs.put(id,kind,'failed',data,'Blockhash expired; chain history has no successful transaction.');throw new ReviewRequired('Transaction expired. Owner recovery can safely rebuild it.');}
+    if(!valid.value&&!status){const landed=await rpc.getTransaction(data.signature,{maxSupportedTransactionVersion:0,commitment:'confirmed'});if(landed?.meta&&!landed.meta.err){await this.jobs.put(id,kind,'confirmed',data);return data.signature as string;}if(landed&&!landed.meta)throw new PendingOperation('Waiting for complete transaction history.');await this.jobs.put(id,kind,'failed',{...data,automaticRetry:true},'Blockhash expired; chain history has no successful transaction.');throw new PendingOperation('Transaction expired; automatic recovery is scheduled.');}
     if(!status)await rpc.sendRawTransaction(Buffer.from(data.raw,'base64'),{skipPreflight:false,maxRetries:2});
     await this.jobs.put(id,kind,'submitted',data);throw new PendingOperation('Waiting for transaction confirmation.');
   }
-  async recover(id:string){const job=await this.jobs.get(id);if(!job)throw new Error('Job not found.');if(job.data.signature){const{rpc}=this.require();const status=(await rpc.getSignatureStatuses([job.data.signature],{searchTransactionHistory:true})).value[0];if(status&&!status.err){if(status.confirmationStatus==='confirmed'||status.confirmationStatus==='finalized')await this.jobs.put(id,job.kind,'confirmed',job.data);return;}if(!status&&(await rpc.isBlockhashValid(job.data.blockhash,{commitment:'confirmed'})).value)throw new PendingOperation('Transaction is still valid; reconciliation must finish first.');const landed=await rpc.getTransaction(job.data.signature,{maxSupportedTransactionVersion:0,commitment:'confirmed'});if(landed&&!landed.meta?.err){await this.jobs.put(id,job.kind,'confirmed',job.data);return;}}
-    await this.jobs.put(id,job.kind,'retryable',{attempts:[...(job.data.attempts??[]),{signature:job.data.signature,error:job.error}],...Object.fromEntries(Object.entries(job.data).filter(([key])=>!['raw','signature','blockhash','attempts'].includes(key)))});
+  async recover(id:string){
+    const job=await this.jobs.get(id);if(!job)throw new Error('Job not found.');
+    if(job.data.signature){
+      const{rpc}=this.require();const status=(await rpc.getSignatureStatuses([job.data.signature],{searchTransactionHistory:true})).value[0];
+      if(status?.err&&!['confirmed','finalized'].includes(status.confirmationStatus??''))throw new PendingOperation('Waiting for the failed transaction to reach confirmation.');
+      if(status&&!status.err){if(status.confirmationStatus==='confirmed'||status.confirmationStatus==='finalized')await this.jobs.put(id,job.kind,'confirmed',job.data);return;}
+      if(!status&&(await rpc.isBlockhashValid(job.data.blockhash,{commitment:'confirmed'})).value)throw new PendingOperation('Transaction is still valid; reconciliation must finish first.');
+      const landed=await rpc.getTransaction(job.data.signature,{maxSupportedTransactionVersion:0,commitment:'confirmed'});
+      if(landed&&!landed.meta)throw new PendingOperation('Waiting for complete transaction history.');
+      if(landed?.meta&&!landed.meta.err){await this.jobs.put(id,job.kind,'confirmed',job.data);return;}
+    }
+    await this.jobs.put(id,job.kind,'retryable',{attempts:[...(job.data.attempts??[]),{signature:job.data.signature,error:job.error}],...Object.fromEntries(Object.entries(job.data).filter(([key])=>!['raw','signature','blockhash','attempts','automaticRetry'].includes(key)))});
   }
   async ownsNft(mint:string,wallet=this.address!){const{rpc}=this.require();const account=await rpc.getAccountInfo(new PublicKey(mint));if(!account)return false;
     if(account.owner.toBase58()===CORE_PROGRAM){const{createUmi}=await import('@metaplex-foundation/umi-bundle-defaults');const{fetchAsset}=await import('@metaplex-foundation/mpl-core');const asset=await fetchAsset(createUmi(config.SOLANA_RPC_URL),mint);return asset.owner===wallet;}

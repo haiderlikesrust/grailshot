@@ -61,7 +61,7 @@ test('CARDS deposits remain visible with spending disabled and a zero saved cap;
     assert.equal(treasury.view.rate, 0);
     assert.equal(treasury.view.claimed, 0);
     assert.equal(treasury.view.ready, false);
-    assert.ok(treasury.view.blockers.includes('Set a daily spending cap'));
+    assert.ok(treasury.view.blockers.includes('Set a positive daily cap or enable unlimited spending'));
     assert.ok(treasury.view.blockers.includes('Mainnet spending is disabled'));
     assert.equal(treasury.affordable(), null);
     assert.equal(state.claims, 0);
@@ -173,5 +173,18 @@ test('reservations are deducted from balances and saving controls requires a fre
     assert.equal(treasury.view.available, 15);
     assert.equal(treasury.view.paused, true);
     assert.equal(state.claims, 0);
+  });
+});
+
+test('existing caps migrate to unlimited once while pause and reserves survive; later optional caps persist',async()=>{
+  await fixture(async({treasury,db,chain,providers})=>{
+    assert.equal(treasury.settings.dailyCapUsd,null);
+    const legacy={...treasury.settings,paused:true,dailyCapUsd:100,gasReserveSol:.02};delete legacy.allocationVersion;
+    await db.query('UPDATE settings SET data=$1 WHERE id=1',[JSON.stringify(legacy)]);
+    const restart=()=>new Treasury(db,chain as unknown as Chain,providers as unknown as Providers);
+    const migrated=restart();await migrated.init();
+    assert.equal(migrated.settings.dailyCapUsd,null);assert.equal(migrated.settings.paused,true);assert.equal(migrated.settings.gasReserveSol,.02);
+    await migrated.save({...migrated.settings,dailyCapUsd:25});
+    const again=restart();await again.init();assert.equal(again.settings.dailyCapUsd,25);
   });
 });

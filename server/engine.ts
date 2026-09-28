@@ -4,11 +4,12 @@ import type { Prize, RoundView, Standing } from '../shared/types';
 import { atomic, audit, type Database } from './db';
 import { PendingOperation, ReviewRequired } from './jobs';
 import type { Treasury } from './treasury';
-export type Round={id:string;number:number;status:string;deadline:number;stage:number;targets:Target[];contenders:string[];prize:Prize|null;tier:number|null;winner:string|null;message:string|null;eligibilitySupply?:string;reviewReason?:string};
+export type Round={id:string;number:number;status:string;deadline:number;stage:number;targets:Target[];contenders:string[];prize:Prize|null;tier:number|null;winner:string|null;message:string|null;eligibilitySupply?:string;reviewReason?:string;retryAt?:number;retryFailures?:number};
 export class Engine {
   current:Round|null=null;
   standings:Standing[]=[];
   private lastPurchaseRetry=0;
+  private retry(error:unknown){const r=this.current!;r.retryFailures=error instanceof PendingOperation?0:(r.retryFailures??0)+1;r.retryAt=Date.now()+(error instanceof PendingOperation?3000:Math.min(60_000,3000*2**Math.min(r.retryFailures,5)));}
   constructor(readonly db:Database,readonly treasury:Treasury,readonly online:(wallet:string)=>boolean){}
   async persist(){if(!this.current)return;const{number,...data}=this.current;await this.db.query('UPDATE rounds SET status=$2,data=$3 WHERE id=$1',[data.id,data.status,JSON.stringify(data)]);}
   async init(){
@@ -25,6 +26,8 @@ export class Engine {
   view(wallet?:string,now=Date.now()):RoundView|null{const r=this.current;if(!r)return null;const player=this.standings.find(s=>s.wallet===wallet);const target=r.status==='live'?r.targets.find(t=>targetVisible(t,now))??null:null;return{id:r.id,number:r.number,status:r.status,deadline:r.deadline,stage:r.stage,entrants:this.standings.filter(s=>!s.disqualified).length,standings:this.standings,prize:r.prize,tier:r.tier,winner:r.winner,message:r.message,registered:!!player,target,canShoot:!!player&&!player.disqualified&&r.status==='live'&&r.contenders.includes(wallet!)};}
   async shot(wallet:string,roundId:string,targetId:string,x:number,y:number,receivedAt:number,latency:number){const r=this.current;if(!r||r.id!==roundId||r.status!=='live'||!r.contenders.includes(wallet))throw new Error('You are not playing in this round.');const target=r.targets.find(t=>t.id===targetId);if(!target)throw new Error('Unknown target.');const score=scoreShot(target,x,y,receivedAt,latency);if(score===null)throw new Error('That shot missed the target window.');
     await atomic(this.db,async()=>{const inserted=await this.db.query('INSERT INTO shots(round_id,wallet,target_id,x,y,score,received_at,latency) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING RETURNING target_id',[r.id,wallet,targetId,x,y,score,receivedAt,latency]);if(!inserted.rows.length)throw new Error('One shot per target.');await this.db.query('UPDATE entries SET score=score+$3,shots=shots+1 WHERE round_id=$1 AND wallet=$2',[r.id,wallet,score]);});await this.reloadStandings();
+    const standing=this.standings.find(p=>p.wallet===wallet)!;
+    return{roundId:r.id,targetId,accepted:true as const,score,totalScore:standing.score,shots:standing.shots};
   }
   async scheduleTargets(wallets:string[],count:number){const r=this.current!;const startsAt=Date.now()+5000;r.status='countdown';r.deadline=startsAt;r.contenders=wallets;r.targets=createTargets(startsAt,count,()=>randomInt(0,1_000_000)/1_000_000,randomUUID);r.message=r.stage?`Tiebreaker ${r.stage} · ${wallets.length} players remain`:'React fast. Ten flashes. One winner.';await this.persist();}
   async step(){const now=Date.now(),t=this.treasury;let r=this.current;
@@ -46,9 +49,9 @@ export class Engine {
       }catch{r.deadline=now+10_000;r.message='Verifying holdings. Registration resumes shortly.';await this.persist();}return;
     }
     if(r.status==='purchasing'){
-      if(t.settings.paused)return;if(now-this.lastPurchaseRetry<3000)return;this.lastPurchaseRetry=now;
-      try{r.prize=await t.providers.purchase(r.id,r.tier!,t.settings);await this.db.query("UPDATE prizes SET status='reserved',round_id=$2 WHERE id=$1",[r.prize.id,r.id]);t.opened();await this.persist();await this.scheduleTargets(this.standings.map(p=>p.wallet),10);}
-      catch(error){if(error instanceof PendingOperation){r.message='The pack is being confirmed on-chain.';}else{r.message='The pack is delayed. Your place and any purchased prize are preserved.';await audit(this.db,'pack-delay',{round:r.id,error:(error as Error).message});await this.db.query('UPDATE jobs SET error=$2,updated_at=$3 WHERE id=$1',[`pack:${r.id}`,(error as Error).message,Date.now()]);if(error instanceof ReviewRequired)r.status='review';}await this.persist();}return;
+      if(t.settings.paused)return;if(now<(r.retryAt??0)||now-this.lastPurchaseRetry<3000)return;this.lastPurchaseRetry=now;
+      try{r.prize=await t.providers.purchase(r.id,r.tier!,t.settings);await this.db.query("UPDATE prizes SET status='reserved',round_id=$2 WHERE id=$1",[r.prize.id,r.id]);t.opened();r.retryAt=0;r.retryFailures=0;r.status='registration';r.deadline=0;r.message='Prize secured. Rechecking connected holders.';await this.persist();}
+      catch(error){this.retry(error);if(error instanceof PendingOperation){r.message='The pack is being confirmed. Recovery runs automatically.';}else{r.message=error instanceof ReviewRequired?'The pack needs owner review. Any purchased prize is preserved.':'The pack is delayed. Retrying automatically; your place and prize are preserved.';await audit(this.db,'pack-delay',{round:r.id,error:(error as Error).message});await this.db.query('UPDATE jobs SET error=$2,updated_at=$3 WHERE id=$1',[`pack:${r.id}`,(error as Error).message,Date.now()]);if(error instanceof ReviewRequired)r.status='review';}await this.persist();}return;
     }
     if(r.status==='countdown'&&now>=r.deadline){r.status='live';r.deadline=r.deadline+r.targets.length*TARGET_SLOT_MS+100;r.message=null;await this.persist();return;}
     if(r.status==='live'&&now>=r.deadline){r.status='adjudicating';r.deadline=0;await this.persist();return;}
@@ -67,10 +70,10 @@ export class Engine {
       }catch(error){if(error instanceof ReviewRequired)throw error;r.message='Checking the final result. The prize is reserved.';r.deadline=now+3000;await this.persist();}return;
     }
     if(r.status==='awarding'){
-      if(now-this.lastPurchaseRetry<3000)return;this.lastPurchaseRetry=now;
+      if(now<(r.retryAt??0)||now-this.lastPurchaseRetry<3000)return;this.lastPurchaseRetry=now;
       try{const signature=await t.chain.transferNft(`award:${r.prize!.id}`,r.prize!.mint,r.winner!,t.settings);
         r.prize!.transferSignature=signature;await atomic(this.db,async()=>{await this.db.query("UPDATE prizes SET status='awarded',winner=$2,round_id=$3,transfer_signature=$4,data=$5 WHERE id=$1 AND (winner IS NULL OR winner=$2)",[r.prize!.id,r.winner,r.id,signature,JSON.stringify(r.prize)]);r.status='complete';r.deadline=now+10_000;r.message='Card delivered. The next grail is waiting.';await this.persist();});t.lastRefresh=0;
-      }catch(error){r.message='Your card is reserved while its transfer is confirmed.';if(!(error instanceof PendingOperation)){await audit(this.db,'award-delay',{round:r.id,error:(error as Error).message});if(error instanceof ReviewRequired){r.status='review';r.reviewReason='Transfer needs recovery';}}await this.persist();}return;
+      }catch(error){this.retry(error);r.message='Your card is reserved. Transfer recovery runs automatically.';if(!(error instanceof PendingOperation)){await audit(this.db,'award-delay',{round:r.id,error:(error as Error).message});if(error instanceof ReviewRequired){r.status='review';r.reviewReason='Transfer needs recovery';r.message='The transfer needs owner review. Your card remains reserved.';}}await this.persist();}return;
     }
   }
   async carry(message:string){const r=this.current!;if(r.prize)await this.db.query("UPDATE prizes SET status='available',round_id=NULL WHERE id=$1 AND winner IS NULL",[r.prize.id]);r.status='carried';r.deadline=Date.now()+10_000;r.message=message;await this.persist();}
@@ -91,6 +94,6 @@ export class Engine {
       if(pack?.data.memo){const status=await this.treasury.providers.cc(`/pack/status?memo=${encodeURIComponent(pack.data.memo)}`);if(status.pack?.refunded&&status.pack.refund_transaction_signature&&!status.send){r.status='cancelled';r.deadline=0;r.message='The provider refunded this unopened pack. Funds remain in the treasury.';await this.treasury.providers.jobs.put(pack.id,'pack','complete',{...pack.data,refunded:true,refundSignature:status.pack.refund_transaction_signature});await this.persist();this.treasury.lastRefresh=0;return;}}
       r.status='purchasing';
     }
-    r.message='Recovery in progress.';await this.persist();
+    r.retryAt=0;r.retryFailures=0;r.message='Recovery in progress.';await this.persist();
   }
 }

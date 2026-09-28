@@ -108,6 +108,72 @@ test('failed and expired transactions need reconciliation before a rebuild',asyn
     await assert.rejects(chain.execute('failed','swap',async()=>{throw new Error('must not rebuild');},settings),ReviewRequired);
   }finally{await db.close();}
 });
+
+test('expired transactions automatically rebuild only after history reconciliation and a durable retry delay',async()=>{
+  const db=await openDatabase(undefined,'memory://');await migrate(db);const jobs=new Jobs(db),signer=Keypair.generate();
+  let builds=0,sends=0,valid=false,landed=false;
+  const rpc={getSignatureStatuses:async()=>({value:[null]}),isBlockhashValid:async()=>({value:valid}),getTransaction:async()=>landed?{meta:{err:null}}:null,sendRawTransaction:async()=>{sends++;}};
+  const chain=new Chain(jobs);chain.require=()=>({rpc:rpc as any,signer});
+  const build=async()=>{builds++;return new VersionedTransaction(new TransactionMessage({payerKey:signer.publicKey,recentBlockhash:Keypair.generate().publicKey.toBase58(),instructions:[]}).compileToV0Message());};
+  try{
+    await jobs.put('expired','swap','submitted',{signature:'old',blockhash:'old',raw:'old'});
+    await assert.rejects(chain.execute('expired','swap',build,settings),PendingOperation);
+    await assert.rejects(chain.execute('expired','swap',build,settings),PendingOperation);assert.equal(builds,0);
+    await db.query('UPDATE jobs SET updated_at=0 WHERE id=$1',['expired']);
+    // History can become visible after the original expiration check: do not repay.
+    landed=true;assert.equal(await chain.execute('expired','swap',build,settings),'old');assert.equal(builds,0);
+    landed=false;await jobs.put('retry','swap','failed',{signature:'old',blockhash:'old',raw:'old',automaticRetry:true});
+    await db.query('UPDATE jobs SET updated_at=0 WHERE id=$1',['retry']);
+    const oldBuild=build;const freshBuild=async()=>{const tx=await oldBuild();valid=true;return tx;};
+    await assert.rejects(chain.execute('retry','swap',freshBuild,settings),PendingOperation);
+    assert.equal(builds,1);assert.equal(sends,1);assert.equal((await jobs.get('retry')).data.attempts[0].signature,'old');
+  }finally{await db.close();}
+});
+
+test('transient purchase errors back off automatically and a recovered prize waits for connected opponents',async()=>{
+  const db=await openDatabase(undefined,'memory://');await migrate(db);let calls=0;
+  const prize={id:'recovered-prize',mint:'recovered-mint',name:'Fixture',image:'',value:31,rarity:'Test'};
+  const treasury={settings,maintain:async()=>{},opened:()=>{},providers:{purchase:async()=>{calls++;if(calls===1)throw new Error('Temporary outage');return prize;}},chain:{eligibility:async()=>({eligible:true})}} as unknown as Treasury;
+  try{
+    await db.query("INSERT INTO prizes(id,mint,data,status) VALUES($1,$2,$3,'available')",[prize.id,prize.mint,JSON.stringify(prize)]);
+    const engine=new Engine(db,treasury,()=>false);await engine.create(null,25);engine.current!.status='purchasing';
+    await engine.step();assert.equal(engine.current!.status,'purchasing');assert.ok(engine.current!.retryAt!>Date.now());
+    await engine.step();assert.equal(calls,1);
+    // A restart resumes the same purchase and persisted backoff.
+    const restarted=new Engine(db,treasury,()=>false);await restarted.init();await restarted.step();assert.equal(calls,1);
+    restarted.current!.retryAt=0;await restarted.step();assert.equal(calls,2);assert.equal(restarted.current!.status,'registration');
+    await restarted.step();assert.equal(restarted.current!.status,'registration');assert.equal(restarted.current!.prize!.id,prize.id);assert.equal(calls,2);
+  }finally{await db.close();}
+});
+
+test('buyback quotes use provider amounts, cache concurrent requests, and distinguish unavailable from failures',async()=>{
+  const p=new Providers({} as Chain,{} as Jobs);let calls=0;
+  p.cc=async(path)=>{calls++;return path.includes('missing')?{available:false}:path.includes('invalid')?{available:true,amount:'wrong'}:{available:true,amount:26_350_000};};
+  const [a,b]=await Promise.all([p.buybackQuote('card'),p.buybackQuote('card')]);assert.equal(calls,1);assert.equal(a.amount,26.35);assert.deepEqual(a,b);
+  assert.equal((await p.buybackQuote('missing')).status,'unavailable');assert.equal((await p.buybackQuote('invalid')).status,'error');
+});
+
+test('automatic payment rebuild rechecks a newly reduced cap before requesting another order',async()=>{
+  const db=await openDatabase(undefined,'memory://');await migrate(db);const jobs=new Jobs(db);
+  try{
+    await jobs.put('pack:cap-rebuild','pack','purchasing',{tier:25,funded:true,memo:'original',transaction:'original'});
+    await jobs.put('pack:cap-rebuild:payment','pack-payment','failed',{signature:'old',raw:'old',automaticRetry:true});
+    const chain={execute:async(_id:string,_kind:string,build:()=>unknown)=>build()} as unknown as Chain;
+    const p=new Providers(chain,jobs);p.packPayment=async()=>{throw new Error('Must not request or build a replacement');};
+    await assert.rejects(p.purchase('cap-rebuild',25,{...settings,dailyCapUsd:0}),/spending cap/);
+  }finally{await db.close();}
+});
+
+test('an unconfirmed failure cannot authorize a replacement transaction',async()=>{
+  const db=await openDatabase(undefined,'memory://');await migrate(db);const jobs=new Jobs(db),signer=Keypair.generate();
+  const chain=new Chain(jobs);chain.require=()=>({signer,rpc:{getSignatureStatuses:async()=>({value:[{confirmationStatus:'processed',err:{InstructionError:[0,'Custom']}}]})} as any});
+  try{
+    await jobs.put('not-final','swap','submitted',{signature:'old',raw:'old',blockhash:'old'});
+    await assert.rejects(chain.execute('not-final','swap',async()=>{throw new Error('must not build');},settings),PendingOperation);
+    await assert.rejects(chain.recover('not-final'),PendingOperation);
+    assert.equal((await jobs.get('not-final')).data.signature,'old');
+  }finally{await db.close();}
+});
 test('pack recovery resumes one memo, one payment and one prize through provider interruptions',async()=>{
   const db=await openDatabase(undefined,'memory://');await migrate(db);const jobs=new Jobs(db);
   let generations=0,payments=0,opens=0,owned=false;

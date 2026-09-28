@@ -64,9 +64,22 @@ test('cadence boundaries and spendable pack limits',()=>{
   assert.equal(cadence(0,100),300_000);
   const dollars=(n:number)=>BigInt(n)*1_000_000n;
   assert.equal(selectPack(24_999_999n,dollars(500),[25,50,100]),null);
-  for(const tier of [25,50,100])assert.equal(selectPack(dollars(tier),dollars(500),[25,50,100]),tier);
+  for(const tier of [25,50,100])assert.equal(selectPack(dollars(tier),dollars(500),[25,50,100]),25);
   assert.equal(selectPack(dollars(100),dollars(49),[25,50,100]),25);
-  assert.equal(selectPack(dollars(100),dollars(500),[25,50]),50);
+  assert.equal(selectPack(dollars(100),dollars(500),[25,50]),25);
   assert.equal(selectPack(dollars(100),dollars(500),[]),null);
   assert.equal(selectPack(dollars(100),dollars(24),[25,50,100]),null);
+});
+
+test('adaptive packs preserve small balances and mix stocked tiers at larger balances',()=>{
+  const dollars=(n:number)=>BigInt(n)*1_000_000n,stock=[25,50,100,500];
+  let balance=100;
+  for(let count=0;count<4;count++){const tier=selectPack(dollars(balance),null,stock,count);assert.equal(tier,25);balance-=tier!;}
+  assert.equal(selectPack(0n,null,stock,4),null);
+  assert.deepEqual(Array.from({length:10},(_,i)=>selectPack(dollars(1000),null,stock,i)),[25,50,25,100,25,50,25,100,50,25]);
+  assert.equal(selectPack(dollars(10_000),null,stock,9),500);
+  assert.equal(selectPack(dollars(9999),null,stock,9),25);
+  assert.equal(selectPack(dollars(10_000),null,[25,50,100],9),100);
+  assert.equal(selectPack(dollars(10_000),dollars(49),stock,9),25);
+  assert.equal(selectPack(dollars(100),null,[50,100,500],9),null);
 });

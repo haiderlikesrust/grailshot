@@ -6,7 +6,8 @@ const { OnlinePumpSdk, PUMP_SDK, feeSharingConfigPda, normalizeQuoteMint } = cre
 import { Chain, type TxPolicy } from './chain';
 import { Jobs, PendingOperation, ReviewRequired } from './jobs';
 import { config } from './config';
-import type { Prize, Settings } from '../shared/types';
+import { PACK_TIERS } from '../shared/game';
+import type { Prize, Settings, BuybackQuote } from '../shared/types';
 import { fetchMetadata } from './remote-metadata';
 
 export async function jsonFetch(url:string,init:RequestInit={}){const response=await fetch(url,{...init,signal:AbortSignal.timeout(15_000)});const body:any=await response.json();if(!response.ok)throw new Error(body.error||body.message||`Provider returned HTTP ${response.status}`);return body;}
@@ -14,9 +15,22 @@ const CC='https://gacha.collectorcrypt.com';
 const JUP='https://api.jup.ag/swap/v2';
 const PACK_WALLET=config.COLLECTOR_CRYPT_PAYMENT_WALLET;
 export class Providers {
+  private buybackCache=new Map<string,{expires:number;quote:Promise<BuybackQuote>}>();
   constructor(readonly chain:Chain,readonly jobs:Jobs){}
+  buybackQuote(mint:string):Promise<BuybackQuote>{
+    const cached=this.buybackCache.get(mint);if(cached&&cached.expires>Date.now())return cached.quote;
+    if(this.buybackCache.size>=128)this.buybackCache.delete(this.buybackCache.keys().next().value!);
+    const quote=(async():Promise<BuybackQuote>=>{try{
+      const result=await this.cc(`/buyback/available?nft=${encodeURIComponent(mint)}`);
+      if(result.available===false)return{status:'unavailable',amount:null,checkedAt:Date.now()};
+      const amount=Number(result.amount);
+      if(result.available!==true||!Number.isSafeInteger(amount)||amount<10_000||amount>280_000_000_000)throw new Error('Invalid buyback quote');
+      return{status:'available',amount:amount/1e6,checkedAt:Date.now()};
+    }catch{return{status:'error',amount:null,checkedAt:Date.now()};}})();
+    this.buybackCache.set(mint,{expires:Date.now()+60_000,quote});return quote;
+  }
   cc(path:string,data?:unknown){return jsonFetch(`${CC}/api${path}`,{method:data?'POST':'GET',headers:{...(data?{'Content-Type':'application/json'}:{}),...(config.COLLECTOR_CRYPT_API_KEY?{'x-api-key':config.COLLECTOR_CRYPT_API_KEY}:{})},body:data?JSON.stringify(data):undefined});}
-  async machines(){const[catalog,status]=await Promise.all([this.cc('/machines'),this.cc('/status')]);if(status.machineStatus!=='running')return[];return catalog.machines.filter((m:any)=>m.public&&[25,50,100].includes(m.price)&&m.code===`pokemon_${m.price}`&&m.contains===1&&Object.values(m.stock??{}).length>0&&Object.values(m.stock??{}).every((n:any)=>Number.isFinite(n)&&n>0)&&status.gachas?.some((s:any)=>s.code===m.code&&s.isOpen));}
+  async machines(){const[catalog,status]=await Promise.all([this.cc('/machines'),this.cc('/status')]);if(status.machineStatus!=='running')return[];return catalog.machines.filter((m:any)=>m.public&&PACK_TIERS.includes(m.price)&&m.code===`pokemon_${m.price}`&&m.contains===1&&Object.values(m.stock??{}).length>0&&Object.values(m.stock??{}).every((n:any)=>Number.isFinite(n)&&n>0)&&status.gachas?.some((s:any)=>s.code===m.code&&s.isOpen));}
   quote(inputMint:string,outputMint:string,amount:bigint,taker?:string,slippageBps=100){return jsonFetch(`${JUP}/order?${new URLSearchParams({inputMint,outputMint,amount:amount.toString(),slippageBps:String(slippageBps),excludeRouters:'jupiterz,dflow,okx',...(taker?{taker}:{})})}`,{headers:{'x-api-key':config.JUPITER_API_KEY}});}
   async tokenDelta(signature:string,mint:string){const{rpc,signer}=this.chain.require();const tx=await rpc.getTransaction(signature,{commitment:'confirmed',maxSupportedTransactionVersion:0});if(!tx||!tx.meta)throw new PendingOperation('Waiting for transaction accounting.');if(tx.meta.err)throw new ReviewRequired('Transaction failed.');
     if(mint===NATIVE_MINT.toBase58()){const index=tx.transaction.message.staticAccountKeys.findIndex(k=>k.equals(signer.publicKey));if(index<0)return 0n;return BigInt(tx.meta.postBalances[index]-tx.meta.preBalances[index]+(index===0?tx.meta.fee:0));}
@@ -56,13 +70,14 @@ export class Providers {
     if(job?.status==='complete')return job.data.prize;
     if(!job){if(!(await this.machines()).some((m:any)=>m.price===tier))throw new Error('Selected pack is temporarily unavailable.');await this.jobs.put(id,'pack','funding',{tier});job=await this.jobs.get(id);}
     const d=job.data;
-    if(d.tier!==tier||![25,50,100].includes(tier))throw new ReviewRequired('Pack tier changed during recovery.');
+    if(d.tier!==tier||!PACK_TIERS.includes(tier as typeof PACK_TIERS[number]))throw new ReviewRequired('Pack tier changed during recovery.');
     const paymentJob=await this.jobs.get(`${id}:payment`);
-    if(!paymentJob?.data.raw&&!['submitted','confirmed'].includes(paymentJob?.status)){
+    const checkCap=async()=>{
       const day=new Date();day.setUTCHours(0,0,0,0);
       const spent=BigInt((await this.jobs.db.query("SELECT COALESCE(SUM(amount_micros),0)::text AS amount FROM ledger WHERE kind='pack' AND created_at>=$1",[day.getTime()])).rows[0].amount);
-      if(spent+BigInt(tier)*1_000_000n>BigInt(Math.floor(settings.dailyCapUsd*1e6)))throw new ReviewRequired('Daily spending cap would be exceeded.');
-    }
+      if(settings.dailyCapUsd!==null&&spent+BigInt(tier)*1_000_000n>BigInt(Math.floor(settings.dailyCapUsd*1e6)))throw new PendingOperation('Waiting for room under the daily spending cap.');
+    };
+    if(!paymentJob?.data.raw&&!['submitted','confirmed'].includes(paymentJob?.status))await checkCap();
     // A landed swap can update the wallet before its job is marked confirmed.
     // Reconcile that same transaction even when the USDC balance already covers the pack.
     const funding=await this.jobs.get(`${id}:usdc`);
@@ -84,6 +99,7 @@ export class Providers {
     if(!d.paymentSignature){
       const policy:TxPolicy={kind:'pack',inputMint:config.USDC_MINT,maxInput:BigInt(tier)*1_000_000n,minInput:BigInt(tier)*1_000_000n,recipient:PACK_WALLET,memo:d.memo,allowedPrograms:[TOKEN_PROGRAM_ID.toBase58(),ASSOCIATED_TOKEN_PROGRAM_ID.toBase58(),SystemProgram.programId.toBase58(),ComputeBudgetProgram.programId.toBase58(),'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr','Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo']};
       d.paymentSignature=await this.chain.execute(`${id}:payment`,'pack-payment',async()=>{
+        await checkCap();
         const tx=await this.packPayment(id,d,tier);policy.memo=d.memo;return tx;
       },settings,policy);
       await this.jobs.put(id,'pack','opening',d);
@@ -103,7 +119,10 @@ export class Providers {
     const payment=await this.jobs.get(`${id}:payment`);
     if(payment?.data.raw||payment?.data.signature)throw new ReviewRequired('Reconcile the existing pack payment before refreshing it.');
     const{rpc}=this.chain.require();
-    if((await rpc.isBlockhashValid(tx.message.recentBlockhash,{commitment:'confirmed'})).value)return tx;
+    if((await rpc.isBlockhashValid(tx.message.recentBlockhash,{commitment:'confirmed'})).value){
+      if(payment?.data.attempts?.length)throw new PendingOperation('Waiting for the previous pack order to expire before renewing it.');
+      return tx;
+    }
     // The treasury has never signed this order. Confirm that the provider has no
     // payment or award before replacing its expired, partially signed message.
     const status=await this.cc(`/pack/status?memo=${encodeURIComponent(data.memo)}`);

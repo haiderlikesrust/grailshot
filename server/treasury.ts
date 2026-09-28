@@ -7,13 +7,13 @@ import { Chain } from './chain';
 import { Providers } from './providers';
 import { PendingOperation } from './jobs';
 export class Treasury {
-  settings:Settings={paused:false,dailyCapUsd:config.DAILY_CAP_USD,gasReserveSol:config.GAS_RESERVE_SOL,slippageBps:config.SLIPPAGE_BPS,cadence:DEFAULT_CADENCE};
+  settings:Settings={paused:false,dailyCapUsd:null,gasReserveSol:config.GAS_RESERVE_SOL,slippageBps:config.SLIPPAGE_BPS,cadence:DEFAULT_CADENCE,allocationVersion:1};
   view:TreasuryView={enabled:config.live,ready:false,paused:false,available:0,balanceStatus:'unconfigured',balanceUpdatedAt:null,rate:0,claimed:0,spentToday:0,cadenceMinutes:10,nextAt:0,reserve:config.GAS_RESERVE_SOL,cardsBalance:'0',address:null,rpc:{ok:false,latency:null,checkedAt:null},blockers:[],error:null};
-  lastRefresh=0;lastOpening=Date.now();availableMicros=0n;tiers:number[]=[];
+  lastRefresh=0;lastOpening=Date.now();availableMicros=0n;tiers:number[]=[];paidPacks=0;
   constructor(readonly db:Database,readonly chain:Chain,readonly providers:Providers){}
-  async init(){const row=(await this.db.query('SELECT data FROM settings WHERE id=1')).rows[0];if(row)this.settings=row.data;else await this.save(this.settings);this.view.blockers=this.blockers();this.view.address=this.chain.address||config.FEE_RECIPIENT||null;this.view.reserve=this.settings.gasReserveSol;const last=(await this.db.query("SELECT created_at FROM ledger WHERE kind='pack' ORDER BY created_at DESC LIMIT 1")).rows[0];if(last)this.lastOpening=Number(last.created_at);}
-  blockers(){return[...configBlockers(),...(this.settings.dailyCapUsd<=0?['Set a daily spending cap']:[]),...(this.chain.address&&this.chain.address!==config.FEE_RECIPIENT?['Treasury signer must match FEE_RECIPIENT']:[])];}
-  async save(settings:Settings){await this.db.query('INSERT INTO settings(id,data) VALUES(1,$1) ON CONFLICT(id) DO UPDATE SET data=EXCLUDED.data',[JSON.stringify(settings)]);this.settings=settings;this.lastRefresh=0;this.view.paused=settings.paused;this.view.blockers=this.blockers();this.view.ready=false;}
+  async init(){const row=(await this.db.query('SELECT data FROM settings WHERE id=1')).rows[0];if(row){this.settings=row.data;if(this.settings.allocationVersion!==1)await this.save({...this.settings,dailyCapUsd:null,allocationVersion:1});}else await this.save(this.settings);this.view.blockers=this.blockers();this.view.address=this.chain.address||config.FEE_RECIPIENT||null;this.view.reserve=this.settings.gasReserveSol;const last=(await this.db.query("SELECT created_at FROM ledger WHERE kind='pack' ORDER BY created_at DESC LIMIT 1")).rows[0];if(last)this.lastOpening=Number(last.created_at);}
+  blockers(){return[...configBlockers(),...(this.settings.dailyCapUsd!==null&&this.settings.dailyCapUsd<=0?['Set a positive daily cap or enable unlimited spending']:[]),...(this.chain.address&&this.chain.address!==config.FEE_RECIPIENT?['Treasury signer must match FEE_RECIPIENT']:[])];}
+  async save(settings:Settings){settings={...settings,allocationVersion:1};await this.db.query('INSERT INTO settings(id,data) VALUES(1,$1) ON CONFLICT(id) DO UPDATE SET data=EXCLUDED.data',[JSON.stringify(settings)]);this.settings=settings;this.lastRefresh=0;this.view.paused=settings.paused;this.view.blockers=this.blockers();this.view.ready=false;}
   async refresh(){
     this.lastRefresh=Date.now();
     this.view.ready=false;
@@ -43,6 +43,7 @@ export class Treasury {
       this.view.rate=Number(sums.recent)/1e6*4;
       this.view.claimed=Number(sums.claimed)/1e6;
       this.view.spentToday=Number(sums.spent)/1e6;
+      this.paidPacks=Number((await this.db.query("SELECT COUNT(*)::int AS count FROM ledger WHERE kind='pack'")).rows[0].count);
       this.view.cardsBalance=cards.toString();
       this.view.balanceUpdatedAt=now;
     }catch{
@@ -78,7 +79,7 @@ export class Treasury {
     const next=this.lastOpening+this.view.cadenceMinutes*60_000;
     this.view.nextAt=this.view.nextAt?Math.min(this.view.nextAt,next):next;
   }
-  affordable(){return selectPack(this.availableMicros,BigInt(Math.max(0,Math.floor((this.settings.dailyCapUsd-this.view.spentToday)*1e6))),this.tiers);}
+  affordable(){return selectPack(this.availableMicros,this.settings.dailyCapUsd===null?null:BigInt(Math.max(0,Math.floor((this.settings.dailyCapUsd-this.view.spentToday)*1e6))),this.tiers,this.paidPacks);}
   async maintain(){if(Date.now()-this.lastRefresh<30_000)return;try{await this.refresh();if(this.view.ready&&!this.settings.paused)await this.providers.collectFees(this.settings);}catch(error){if(!(error instanceof PendingOperation)){this.view.error=(error as Error).message;this.view.ready=false;}}}
   opened(){this.lastOpening=Date.now();this.view.nextAt=this.lastOpening+this.view.cadenceMinutes*60_000;this.lastRefresh=0;}
 }

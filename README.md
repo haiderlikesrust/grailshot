@@ -48,7 +48,7 @@ The page reports measured game ping, jitter, heartbeat timeouts and rendering FP
 
 **Mainnet spending is disabled by default. No paid mainnet transaction has been performed or verified as part of this local build.** Live provider execution still needs validation with your own configuration before enabling unattended spending.
 
-Configure the mint, owner wallet, dedicated fee recipient, backend treasury private key, reliable mainnet RPC, Jupiter API key, and a daily spending cap. Verify the current Collector Crypt payment recipient with the provider and set `COLLECTOR_CRYPT_PAYMENT_WALLET`; transactions paying any other recipient are rejected. The Collector Crypt API key enables partner attribution when available.
+Configure the mint, owner wallet, dedicated fee recipient, backend treasury private key, reliable mainnet RPC, Jupiter API key. Verify the current Collector Crypt payment recipient with the provider and set `COLLECTOR_CRYPT_PAYMENT_WALLET`; transactions paying any other recipient are rejected. The Collector Crypt API key enables partner attribution when available.
 
 Set `TREASURY_PRIVATE_KEY` in your local `.env` to the treasury's base58-encoded Solana private key. A JSON array of 64 integers from 0 to 255 is also supported. Seed phrases and public wallet addresses are not private keys. No separate keypair file is required. The derived wallet address must match `FEE_RECIPIENT`.
 
@@ -62,13 +62,13 @@ Replace these placeholders locally. The key is read only by the backend; never p
 
 The treasury signer must match the configured fee recipient. Use a dedicated recipient because Pump creator vaults may aggregate fees from multiple coins. Fee-sharing arrangements must list that wallet as a shareholder. The adapter reads the quote mint and claims from Pump and PumpSwap using the official SDK, routes non-CARDS proceeds through CARDS, and converts CARDS to USDC for purchases.
 
-Only public single-card Pokémon packs priced at exactly $25, $50 or $100 are eligible. Catalog price, stock and machine availability are checked. Automatic buyback is explicitly disabled. Purchased assets are verified in the treasury and transferred using Metaplex Token Metadata (including programmable NFTs) or Core. Unknown transaction shapes, missing co-signatures, changed payment recipients and unsafe simulations stop for review.
+Only public single-card Pokémon packs priced at exactly $25, $50, $100 or $500 are eligible. Catalog price, stock and machine availability are checked. Automatic buyback is explicitly disabled. Purchased assets are verified in the treasury and transferred using Metaplex Token Metadata (including programmable NFTs) or Core. Unknown transaction shapes, missing co-signatures, changed payment recipients and unsafe simulations stop for review.
 
 Jupiter orders are restricted to Metis routes compatible with direct RPC submission. Quotes are checked for the intended assets, exact input, output threshold and slippage ceiling. Before signing external transactions, simulation checks treasury balances, token authorities, gas reserve and the approved debit. The default and maximum slippage ceiling is 1%.
 
-The owner wallet can open `/admin` to see missing configuration, pause/resume automation, edit the persisted daily cap/cadence/gas reserve, inspect shot records, approve a held result, requeue a reviewed prize and recover stalled jobs. Environment defaults seed settings only on the first database run; later edits should use these owner controls. Set `MAINNET_ENABLED=true` only after configuration and integration validation.
+The owner wallet can open `/admin` to see missing configuration, pause/resume automation, edit the persisted daily cap/cadence/gas reserve, inspect shot records, approve a held result, requeue a reviewed prize and recover stalled jobs. Daily spending defaults to unlimited (`dailyCapUsd: null`). The allocation-v1 migration also removes existing daily caps once, preserving pause, reserve and slippage settings. Optional limits saved afterward persist across restarts; use the owner controls. Set `MAINNET_ENABLED=true` only after configuration and integration validation.
 
-Cadence recalculates every 30 seconds. Confirmed fee income over 15 minutes is multiplied by four for the hourly rate. Opening intervals are one minute at $1,500/hour or $600 available, five minutes at $300/hour or $100 available, and ten minutes otherwise. The largest affordable available pack is selected, subject to the daily cap. Forecast income is never spendable; only one contest can reserve a prize at a time.
+Cadence recalculates every 30 seconds. Confirmed fee income over 15 minutes is multiplied by four for the hourly rate. Opening intervals are one minute at $1,500/hour or $600 available, five minutes at $300/hour or $100 available, and ten minutes otherwise. Pack selection prioritizes $25 rounds below $500 available. At $500 and above, confirmed paid-pack count rotates through $25/$50/$25/$100/$25/$50/$25/$100/$50/$25. At $10,000 and above, every tenth slot can use a $500 surprise pack. Out-of-stock or limited tiers fall back to a smaller allowed tier. Forecast income is never spendable; only one contest can reserve a prize at a time.
 
 ## Recovery
 
@@ -99,3 +99,7 @@ For a VPS, use the included [Dokploy deployment guide](docs/DOKPLOY.md) and `com
 - `tests/` — isolated verification fixtures.
 
 Provider references: [Collector Crypt API](https://docs.collectorcrypt.com/gacha/api), [Collector Crypt catalog](https://gacha.collectorcrypt.com/api/machines), [Jupiter Swap V2](https://developers.jup.ag/docs/swap/order-and-execute), [Pump SDK](https://github.com/pump-fun/pump-public-docs).
+
+Transient purchase/transfer errors retry automatically with backoff up to 60 seconds. Failed or expired signed transactions are reconciled against chain history before rebuilding, with a 30-second retry delay. Live signatures are never replaced. Unknown payment intent, invalid signatures, provider refunds and suspicious play remain held for owner review. After a delayed purchase, entrants are rechecked before countdown.
+
+The navbar shows the configured MEMECOIN_MINT with exact-address copy and Solscan verification. Round results show the winner, confirmed score, insured value and transfer link. Buyback values are read-only Collector Crypt quotes refreshed every minute; unavailable offers are never shown as zero. Live shot feedback comes from the server after the score is recorded.

@@ -61,11 +61,16 @@ test('three online holders share targets; duplicate tabs and forged/repeated sho
     assert.equal(service.engine.view(players[0].wallet,target.startsAt-1)!.target,null);
     assert.equal(service.engine.view(players[0].wallet,target.startsAt+TARGET_MS)!.target,null);
     const p=position(target,Date.now());
-    const accepted=new Promise<void>((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error('Shot acknowledgement timed out')),3000);players[0].socket.on('message',b=>{const event=JSON.parse(b.toString());if(event.type==='snapshot'&&event.data.round?.standings.some((s:any)=>s.wallet===players[0].wallet&&s.shots===1)){clearTimeout(timeout);resolve();}});});
+    const receipt=(socket:WebSocket)=>new Promise<any>((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error('Shot receipt timed out')),3000);const listener=(b:WebSocket.RawData)=>{const event=JSON.parse(b.toString());if(event.type==='shot-result'){clearTimeout(timeout);socket.off('message',listener);resolve(event);}};socket.on('message',listener);});
+    const accepted=receipt(players[0].socket);
     players[0].socket.send(JSON.stringify({type:'shot',roundId:r.id,targetId:target.id,x:p.x,y:p.y,score:999999,clientTime:target.startsAt}));
-    await accepted;
+    const ack=await accepted;
     const scored=service.engine.standings.find(s=>s.wallet===players[0].wallet)!;
     assert.ok(scored.score>0&&scored.score<100);
+    assert.equal(ack.accepted,true);assert.equal(ack.score,scored.score);assert.equal(ack.totalScore,scored.score);assert.equal(ack.targetId,target.id);
+    target.startsAt=Date.now()-180;
+    const missed=receipt(players[1].socket);players[1].socket.send(JSON.stringify({type:'shot',roundId:r.id,targetId:target.id,x:0,y:0}));
+    const miss=await missed;assert.equal(miss.accepted,true);assert.equal(miss.score,0);assert.equal(miss.totalScore,0);
     await assert.rejects(service.engine.shot(players[0].wallet,r.id,target.id,p.x,p.y,Date.now(),0),/One shot/);
     await assert.rejects(service.engine.shot(players[0].wallet,r.id,randomUUID(),p.x,p.y,Date.now(),0),/Unknown target/);
     players[0].socket.close();
@@ -79,6 +84,23 @@ test('registration retains funds with fewer than two eligible online players',as
   const treasury={maintain:async()=>{},settings:{paused:false},providers:{purchase:async()=>{purchases++;}},chain:{eligibility:async()=>({eligible:true,configured:true})}} as unknown as Treasury;
   const engine=new Engine(db,treasury,()=>true);
   try{await engine.create(null,25);engine.current!.deadline=0;await engine.step();assert.equal(engine.current!.status,'registration');assert.equal(purchases,0);}finally{await db.close();}
+});
+
+test('latest result survives a new round and buyback lookup is limited to recorded prizes',async()=>{
+  const db=await openDatabase(undefined,'memory://');let lookups=0;
+  const service=await createApp({db,chain:{init:async()=>{},address:null,rpc:{}} as unknown as Chain,providers:{buybackQuote:async()=>{lookups++;return{status:'available',amount:26.35,checkedAt:Date.now()};}} as unknown as Providers,timers:false,logger:false});
+  try{
+    assert.equal((await service.app.inject('/api/rounds/latest-result')).json(),null);
+    const mint=Keypair.generate().publicKey.toBase58(),prize:Prize={id:randomUUID(),mint,name:'Fixture',image:'',value:31,rarity:'Test'};
+    await db.query("INSERT INTO prizes(id,mint,data,status) VALUES($1,$2,$3,'available')",[prize.id,mint,JSON.stringify(prize)]);
+    await service.engine.create(prize,25);const id=service.engine.current!.id;
+    await db.query("INSERT INTO players(wallet,name,created_at) VALUES('winner','Fixture winner',0)");
+    await db.query("INSERT INTO entries(round_id,wallet,score,shots) VALUES($1,'winner',208,10)",[id]);
+    service.engine.current!.status='complete';service.engine.current!.winner='winner';await service.engine.persist();await service.engine.create(null,25);
+    const result=(await service.app.inject('/api/rounds/latest-result')).json();assert.equal(result.id,id);assert.equal(result.standings[0].score,208);assert.equal(result.prize.value,31);assert.equal(result.target,null);
+    assert.equal((await service.app.inject(`/api/prizes/${mint}/buyback`)).json().amount,26.35);
+    assert.equal((await service.app.inject(`/api/prizes/${Keypair.generate().publicKey.toBase58()}/buyback`)).statusCode,404);assert.equal(lookups,1);
+  }finally{await service.app.close();}
 });
 
 test('ties get three five-target tiebreakers, then carry the same prize',async()=>{

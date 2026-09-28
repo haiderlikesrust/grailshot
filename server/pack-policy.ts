@@ -2,12 +2,13 @@ import { ComputeBudgetProgram, PublicKey, TransactionMessage, type VersionedTran
 import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import nacl from 'tweetnacl';
 import { ReviewRequired } from './jobs';
+import { PACK_TIERS } from '../shared/game';
 
 export const PACK_MEMO_PROGRAMS = new Set(['MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr', 'Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo']);
 
 /** Validate intent, not just net balance changes. Never alter a provider-signed message. */
 export function validatePackPayment(tx: VersionedTransaction, treasury: PublicKey, recipient: PublicKey, mint: PublicKey, amount: bigint, memo: string) {
-  if (![25_000_000n, 50_000_000n, 100_000_000n].includes(amount) || !/^cc-[a-f0-9-]{36}$/.test(memo)) throw new ReviewRequired('Invalid pack purchase intent.');
+  if (!PACK_TIERS.some(tier=>BigInt(tier)*1_000_000n===amount) || !/^cc-[a-f0-9-]{36}$/.test(memo)) throw new ReviewRequired('Invalid pack purchase intent.');
   if (tx.message.addressTableLookups.length) throw new ReviewRequired('Pack address tables require review.');
   const message = TransactionMessage.decompile(tx.message);
   const signers = tx.message.staticAccountKeys.slice(0, tx.message.header.numRequiredSignatures);

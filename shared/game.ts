@@ -33,11 +33,6 @@ export function eligible(amounts: string[], supply: string) {
   const total = BigInt(supply);
   return total > 0n && amounts.reduce((sum, x) => sum + BigInt(x), 0n) * 1000n >= total;
 }
-export type CadenceSettings = { fastRate: number; fastBalance: number; mediumRate: number; mediumBalance: number };
-export const DEFAULT_CADENCE: CadenceSettings = { fastRate: 1500, fastBalance: 600, mediumRate: 300, mediumBalance: 100 };
-export function cadence(rate: number, available: number, settings = DEFAULT_CADENCE) {
-  return rate >= settings.fastRate || available >= settings.fastBalance ? 60_000 : rate >= settings.mediumRate || available >= settings.mediumBalance ? 300_000 : 600_000;
-}
 export const PACK_TIERS = [25, 50, 100, 500] as const;
 export function selectPack(availableMicros: bigint, dailyRemainingMicros: bigint | null, tiers: number[], paidPacks=0) {
   // Use confirmed funds only. Small treasuries preserve the number of games;

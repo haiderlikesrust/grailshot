@@ -5,6 +5,7 @@ import { NATIVE_MINT } from '@solana/spl-token';
 import { config } from '../server/config';
 import { openDatabase, migrate } from '../server/db';
 import { Treasury } from '../server/treasury';
+import { Engine } from '../server/engine';
 import type { Chain } from '../server/chain';
 import type { Providers } from '../server/providers';
 
@@ -186,5 +187,57 @@ test('existing caps migrate to unlimited once while pause and reserves survive; 
     assert.equal(migrated.settings.dailyCapUsd,null);assert.equal(migrated.settings.paused,true);assert.equal(migrated.settings.gasReserveSol,.02);
     await migrated.save({...migrated.settings,dailyCapUsd:25});
     const again=restart();await again.init();assert.equal(again.settings.dailyCapUsd,25);
+  });
+});
+
+test('funding opens a lobby without a scheduled wait, then another after the result display',async()=>{
+  await fixture(async({treasury,state,db})=>{
+    state.cards=0n;state.usdc=0n;
+    const engine=new Engine(db,treasury,()=>true);
+    await engine.step();assert.equal(engine.current,null);
+    state.usdc=25_000_000n;treasury.lastRefresh=Date.now()-10_001;
+    const now=Date.now();await engine.step();
+    assert.equal(engine.current!.status,'registration');assert.equal(engine.current!.tier,25);
+    assert.ok(engine.current!.deadline>=now+30_000&&engine.current!.deadline<Date.now()+30_100);
+    assert.equal(treasury.view.nextPackTier,25);
+    const first=engine.current!.id;await engine.step();assert.equal(engine.current!.id,first,'one active lobby only');
+    engine.current!.status='complete';engine.current!.deadline=Date.now()+10_000;await engine.persist();
+    await engine.step();assert.equal(engine.current!.id,first,'keep the short result display');
+    engine.current!.deadline=0;treasury.lastRefresh=0;await engine.step();
+    assert.notEqual(engine.current!.id,first);assert.equal(engine.current!.status,'registration');
+    assert.equal((await db.query('SELECT COUNT(*)::int AS count FROM rounds')).rows[0].count,2);
+  });
+});
+
+test('funded lobbies still require healthy RPC, stock, gas reserve, budget and unpaused controls',async()=>{
+  await fixture(async({treasury,state,db})=>{
+    state.cards=0n;state.usdc=100_000_000n;
+    const engine=new Engine(db,treasury,()=>true);
+    await treasury.save({...treasury.settings,paused:true});await engine.step();assert.equal(engine.current,null);
+    await treasury.save({...treasury.settings,paused:false,dailyCapUsd:24});await engine.step();assert.equal(engine.current,null);
+    await treasury.save({...treasury.settings,dailyCapUsd:null});state.sol=0n;await engine.step();assert.equal(engine.current,null);
+    state.sol=100_000_000n;state.rpcFails=true;treasury.lastRefresh=0;await engine.step();assert.equal(engine.current,null);
+    state.rpcFails=false;state.catalogFails=true;treasury.lastRefresh=0;await engine.step();assert.equal(engine.current,null);
+    state.catalogFails=false;treasury.lastRefresh=0;await engine.step();assert.equal(engine.current!.status,'registration');
+  });
+});
+
+test('idle funding checks run every ten seconds without increasing fee-claim frequency',async t=>{
+  let now=Date.now();t.mock.method(Date,'now',()=>now);
+  await fixture(async({treasury,state})=>{
+    await treasury.maintain();assert.equal(state.quoteCalls,1);assert.equal(state.claims,1);
+    now+=9999;await treasury.maintain();assert.equal(state.quoteCalls,1);
+    now++;await treasury.maintain();assert.equal(state.quoteCalls,2);assert.equal(state.claims,1);
+    now+=20_000;await treasury.maintain();assert.equal(state.quoteCalls,3);assert.equal(state.claims,2);
+  });
+});
+
+test('legacy timing controls are removed without resetting a saved cap or pause',async()=>{
+  await fixture(async({treasury,db,chain,providers})=>{
+    const saved={...treasury.settings,paused:true,dailyCapUsd:50,gasReserveSol:.02,cadence:{fastRate:1500,fastBalance:600,mediumRate:300,mediumBalance:100}};
+    await db.query('UPDATE settings SET data=$1 WHERE id=1',[JSON.stringify(saved)]);
+    const restarted=new Treasury(db,chain as unknown as Chain,providers as unknown as Providers);await restarted.init();
+    assert.equal(restarted.settings.dailyCapUsd,50);assert.equal(restarted.settings.paused,true);assert.equal(restarted.settings.gasReserveSol,.02);
+    assert.equal('cadence' in restarted.settings,false);assert.equal('cadence' in (await db.query('SELECT data FROM settings WHERE id=1')).rows[0].data,false);
   });
 });

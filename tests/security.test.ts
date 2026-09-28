@@ -15,7 +15,6 @@ import { Providers } from '../server/providers';
 import { Jobs, ReviewRequired } from '../server/jobs';
 import type { Chain } from '../server/chain';
 import type { Treasury } from '../server/treasury';
-import { DEFAULT_CADENCE } from '../shared/game';
 import nacl from 'tweetnacl';
 import bs58 from 'bs58';
 import WebSocket from 'ws';
@@ -196,6 +195,6 @@ test('retryable unsigned pack payments still respect a reduced daily spending ca
     await jobs.put('pack:retry', 'pack', 'purchasing', { tier: 25 });
     await jobs.put('pack:retry:payment', 'pack-payment', 'retryable', {});
     const p = new Providers({} as Chain, jobs);
-    await assert.rejects(p.purchase('retry', 25, { paused: false, dailyCapUsd: 0, gasReserveSol: .05, slippageBps: 100, cadence: DEFAULT_CADENCE }), /spending cap/);
+    await assert.rejects(p.purchase('retry', 25, { paused: false, dailyCapUsd: 0, gasReserveSol: .05, slippageBps: 100 }), /spending cap/);
   } finally { await db.close(); }
 });

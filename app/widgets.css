@@ -385,6 +385,7 @@ body, .site-header { background: #131510; }
 
 /* Match feedback and verified card values. */
 .allocation-note{font-size:12px;line-height:1.5;color:#d2dcbf;margin:0 22px 18px}
+.funded-rounds-note{align-self:center;font-size:13px;line-height:1.6;color:#c5cfb7;margin:0}
 .shot-feedback{position:absolute;z-index:7;left:22px;top:49px;pointer-events:none;display:flex;align-items:baseline;gap:12px;font-family:'IBM Plex Mono',monospace;text-shadow:0 2px 8px #000}
 .shot-feedback strong{font-size:22px;color:#ffe052;letter-spacing:-.5px}.shot-feedback span{font-size:12px;color:#e4e7d8}.feedback-miss strong{color:#ffad9d}.feedback-pending strong{color:#c5cbb8;font-size:16px}
 .arena-top .arena-score{color:#fff1a1;font-weight:600}.arena-outcome{min-height:480px}.arena-outcome .hero-card{height:72%;max-width:85%}.arena-outcome .arena-callout{padding-top:40px;padding-bottom:40px;padding-right:28px}

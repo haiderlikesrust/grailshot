@@ -20,7 +20,7 @@ export function FundingWidget({treasury}:{treasury?:TreasuryView}) {
     <div className="pack-tiers" aria-label="Affordable pack tiers">{[25,50,100].map(tier=><div className={priced&&available>=tier?'tier-reached':''} key={tier}><span className="tier-tick">{priced&&available>=tier?<Check size={12}/>:<CircleDot size={10}/>}</span><b>${tier}</b><span>PACK</span></div>)}</div>
     <div className="fund-meter"><Progress value={priced?Math.min(100,available/nextTier*100):0} aria-label={`Funding toward a $${nextTier} pack`}/><div><span>{!priced?'Funding total pending':available>=100?'Standard tiers funded':`${usd(Math.max(0,nextTier-available))} to the $${nextTier} pack`}</span><span>{priced?`${Math.min(100,Math.floor(available/nextTier*100))}%`:'—'}</span></div></div>
     {priced&&<p className="allocation-note">{available>=10_000?'Mixed rounds + occasional $500 surprise packs':available>=500?'Mixing $25, $50 and $100 rounds':'Prioritizing $25 rounds so more holders can play'}</p>}
-    <div className="fund-metrics"><div><Activity size={14}/><span>Fee income<b>{usd(treasury?.rate)}<small> / hr</small></b></span></div><div><Clock3 size={14}/><span>Drop cadence<b>{treasury?.enabled?`${treasury.cadenceMinutes} min`:'At launch'}</b></span></div></div>
+    <div className="fund-metrics"><div><Activity size={14}/><span>Fee income<b>{usd(treasury?.rate)}<small> / hr</small></b></span></div><div><Clock3 size={14}/><span>Round timing<b>{treasury?.paused?'Paused':'When funded'}</b></span></div></div>
     <div className="fund-footer"><span className="live-dot"/><span>Creator fees</span><ArrowRight size={11}/><span>$CARDS</span><ArrowRight size={11}/><span>USDC</span>{treasury?.address&&<a href={`https://solscan.io/account/${treasury.address}`} target="_blank" rel="noreferrer" aria-label="View treasury on Solscan"><ExternalLink size={13}/></a>}</div>
   </section>;
 }
@@ -45,7 +45,7 @@ export function LobbyWidget({round}:{round?:RoundView|null}) {
 
 export function RoundStats({round,countdown}:{round?:RoundView|null;countdown:string}) {
   return <div className="round-strip">
-    <div className="round-next"><span className="mini-label"><Clock3 size={12}/>{round?.status==='live'?'TIME LEFT':'NEXT DROP'}</span><strong className="countdown">{countdown}</strong></div>
+    <div className="round-next"><span className="mini-label"><Clock3 size={12}/>{round?.status==='live'?'TIME LEFT':round?.status==='registration'?'JOIN WINDOW':round?.status==='countdown'?'STARTS IN':'NEXT ROUND'}</span><strong className="countdown">{countdown}</strong></div>
     <div><span className="mini-label"><Users size={12}/>PLAYERS READY</span><strong>{String(round?.entrants??0).padStart(2,'0')}<span className="dim">/ 2 min</span></strong></div>
     <div><span className="mini-label"><Trophy size={12}/>PRIZE PACK</span><strong>{round?.tier?`$${round.tier}`:'$25–100'}</strong></div>
     <div className="round-strip-last"><span className="delivery-icon"><ShieldCheck size={22}/></span><span><b>Winner takes the card.</b><small>Delivered to your wallet</small></span></div>

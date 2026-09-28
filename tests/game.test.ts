@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ARENA, TARGET_MS, TARGET_SLOT_MS, createTargets, position, scoreShot, targetVisible, eligible, cadence, selectPack, type Target } from '../shared/game';
+import { ARENA, TARGET_MS, TARGET_SLOT_MS, createTargets, position, scoreShot, targetVisible, eligible, selectPack, type Target } from '../shared/game';
 
 const target:Target={id:'one',startsAt:10_000,x:500,y:280,phase:0,direction:1};
 const hit=(delay:number,rtt=0)=>{const p=position(target,target.startsAt+delay);return scoreShot(target,p.x,p.y,target.startsAt+delay+rtt/2,rtt);};
@@ -55,13 +55,7 @@ test('holder eligibility uses exact integers and sums all accounts',()=>{
   assert.equal(eligible(['400000000000000000','600000000000000000'],supply),true);
   assert.equal(eligible(['1'],'0'),false);
 });
-test('cadence boundaries and spendable pack limits',()=>{
-  assert.equal(cadence(1499,99),300_000);
-  assert.equal(cadence(1500,0),60_000);
-  assert.equal(cadence(0,600),60_000);
-  assert.equal(cadence(299,99),600_000);
-  assert.equal(cadence(300,0),300_000);
-  assert.equal(cadence(0,100),300_000);
+test('spendable pack limits',()=>{
   const dollars=(n:number)=>BigInt(n)*1_000_000n;
   assert.equal(selectPack(24_999_999n,dollars(500),[25,50,100]),null);
   for(const tier of [25,50,100])assert.equal(selectPack(dollars(tier),dollars(500),[25,50,100]),25);

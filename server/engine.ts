@@ -35,7 +35,7 @@ export class Engine {
       await t.maintain();if(!t.view.ready||t.settings.paused||!t.view.rpc.ok)return;
       if(r&&now<r.deadline)return;
       const prize=(await this.db.query("SELECT data FROM prizes WHERE status='available' AND winner IS NULL LIMIT 1")).rows[0]?.data??null;
-      if(!prize&&now<t.view.nextAt)return;const tier=t.affordable();if(!prize&&!tier)return;await this.create(prize,tier);return;
+      const tier=t.affordable();if(!prize&&!tier)return;await this.create(prize,tier);return;
     }
     if(r.status==='registration'){
       await t.maintain();

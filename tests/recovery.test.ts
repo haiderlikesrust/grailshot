@@ -7,11 +7,10 @@ import { Chain } from '../server/chain';
 import { Providers } from '../server/providers';
 import { Engine } from '../server/engine';
 import type { Treasury } from '../server/treasury';
-import { DEFAULT_CADENCE } from '../shared/game';
 import type { Settings } from '../shared/types';
 import { config } from '../server/config';
 
-const settings:Settings={paused:false,dailyCapUsd:100,gasReserveSol:.05,slippageBps:100,cadence:DEFAULT_CADENCE};
+const settings:Settings={paused:false,dailyCapUsd:100,gasReserveSol:.05,slippageBps:100};
 
 test('a landed funding swap is reconciled before purchase even when USDC is already visible',async()=>{
   const db=await openDatabase(undefined,'memory://');await migrate(db);const jobs=new Jobs(db);

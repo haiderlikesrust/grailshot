@@ -1,5 +1,5 @@
 import { config, configBlockers } from './config';
-import { DEFAULT_CADENCE, cadence, selectPack } from '../shared/game';
+import { selectPack } from '../shared/game';
 import { NATIVE_MINT } from '@solana/spl-token';
 import type { Settings, TreasuryView } from '../shared/types';
 import type { Database } from './db';
@@ -7,16 +7,17 @@ import { Chain } from './chain';
 import { Providers } from './providers';
 import { PendingOperation } from './jobs';
 export class Treasury {
-  settings:Settings={paused:false,dailyCapUsd:null,gasReserveSol:config.GAS_RESERVE_SOL,slippageBps:config.SLIPPAGE_BPS,cadence:DEFAULT_CADENCE,allocationVersion:1};
-  view:TreasuryView={enabled:config.live,ready:false,paused:false,available:0,balanceStatus:'unconfigured',balanceUpdatedAt:null,rate:0,claimed:0,spentToday:0,cadenceMinutes:10,nextAt:0,reserve:config.GAS_RESERVE_SOL,cardsBalance:'0',address:null,rpc:{ok:false,latency:null,checkedAt:null},blockers:[],error:null};
-  lastRefresh=0;lastOpening=Date.now();availableMicros=0n;tiers:number[]=[];paidPacks=0;
+  settings:Settings={paused:false,dailyCapUsd:null,gasReserveSol:config.GAS_RESERVE_SOL,slippageBps:config.SLIPPAGE_BPS,allocationVersion:1};
+  view:TreasuryView={enabled:config.live,ready:false,paused:false,available:0,balanceStatus:'unconfigured',balanceUpdatedAt:null,rate:0,claimed:0,spentToday:0,nextPackTier:null,reserve:config.GAS_RESERVE_SOL,cardsBalance:'0',address:null,rpc:{ok:false,latency:null,checkedAt:null},blockers:[],error:null};
+  lastRefresh=0;lastCollection=0;availableMicros=0n;tiers:number[]=[];paidPacks=0;
   constructor(readonly db:Database,readonly chain:Chain,readonly providers:Providers){}
-  async init(){const row=(await this.db.query('SELECT data FROM settings WHERE id=1')).rows[0];if(row){this.settings=row.data;if(this.settings.allocationVersion!==1)await this.save({...this.settings,dailyCapUsd:null,allocationVersion:1});}else await this.save(this.settings);this.view.blockers=this.blockers();this.view.address=this.chain.address||config.FEE_RECIPIENT||null;this.view.reserve=this.settings.gasReserveSol;const last=(await this.db.query("SELECT created_at FROM ledger WHERE kind='pack' ORDER BY created_at DESC LIMIT 1")).rows[0];if(last)this.lastOpening=Number(last.created_at);}
+  async init(){const row=(await this.db.query('SELECT data FROM settings WHERE id=1')).rows[0];if(row){const {cadence:legacyCadence,...saved}=row.data;this.settings=saved;if(this.settings.allocationVersion!==1)await this.save({...this.settings,dailyCapUsd:null,allocationVersion:1});else if(legacyCadence)await this.save(this.settings);}else await this.save(this.settings);this.view.blockers=this.blockers();this.view.address=this.chain.address||config.FEE_RECIPIENT||null;this.view.reserve=this.settings.gasReserveSol;}
   blockers(){return[...configBlockers(),...(this.settings.dailyCapUsd!==null&&this.settings.dailyCapUsd<=0?['Set a positive daily cap or enable unlimited spending']:[]),...(this.chain.address&&this.chain.address!==config.FEE_RECIPIENT?['Treasury signer must match FEE_RECIPIENT']:[])];}
-  async save(settings:Settings){settings={...settings,allocationVersion:1};await this.db.query('INSERT INTO settings(id,data) VALUES(1,$1) ON CONFLICT(id) DO UPDATE SET data=EXCLUDED.data',[JSON.stringify(settings)]);this.settings=settings;this.lastRefresh=0;this.view.paused=settings.paused;this.view.blockers=this.blockers();this.view.ready=false;}
+  async save(settings:Settings){settings={...settings,allocationVersion:1};await this.db.query('INSERT INTO settings(id,data) VALUES(1,$1) ON CONFLICT(id) DO UPDATE SET data=EXCLUDED.data',[JSON.stringify(settings)]);this.settings=settings;this.lastRefresh=0;this.view.paused=settings.paused;this.view.blockers=this.blockers();this.view.ready=false;this.view.nextPackTier=null;}
   async refresh(){
     this.lastRefresh=Date.now();
     this.view.ready=false;
+    this.view.nextPackTier=null;
     this.availableMicros=0n;
     this.tiers=[];
     this.view.error=null;
@@ -27,8 +28,8 @@ export class Treasury {
     await this.chain.health();
     this.view.rpc=this.chain.rpc;
     // Reading confirmed holdings does not require permission to claim, swap or buy.
-    if(!this.view.address||!config.SOLANA_RPC_URL){this.view.balanceStatus='unconfigured';this.view.nextAt=0;return;}
-    if(!this.view.rpc.ok){this.view.balanceStatus='unavailable';this.view.nextAt=0;this.view.error='Treasury balance check failed. Check the Solana RPC connection.';return;}
+    if(!this.view.address||!config.SOLANA_RPC_URL){this.view.balanceStatus='unconfigured';this.view.nextPackTier=null;return;}
+    if(!this.view.rpc.ok){this.view.balanceStatus='unavailable';this.view.nextPackTier=null;this.view.error='Treasury balance check failed. Check the Solana RPC connection.';return;}
     if(!this.view.balanceUpdatedAt)this.view.balanceStatus='checking';
     let usdc:bigint,cards:bigint,sol:bigint,reserved:bigint;
     try{
@@ -47,7 +48,7 @@ export class Treasury {
       this.view.cardsBalance=cards.toString();
       this.view.balanceUpdatedAt=now;
     }catch{
-      this.view.balanceStatus='unavailable';this.view.nextAt=0;
+      this.view.balanceStatus='unavailable';this.view.nextPackTier=null;
       this.view.error='Treasury balances could not be refreshed. Retrying automatically.';
       return;
     }
@@ -60,7 +61,7 @@ export class Treasury {
         if(quote.errorCode||quote.inputMint!==config.CARDS_MINT||quote.outputMint!==config.USDC_MINT||String(quote.inAmount)!==cards.toString()||!/^\d+$/.test(String(quote.outAmount))||BigInt(quote.outAmount)<=0n)throw new Error('Invalid CARDS valuation');
         cardsValue=BigInt(quote.outAmount)*(10_000n-BigInt(this.settings.slippageBps))/10_000n;
       }catch{
-        this.view.balanceStatus='partial';this.view.nextAt=0;
+        this.view.balanceStatus='partial';this.view.nextPackTier=null;
         this.view.available=Number(usdc>reserved?usdc-reserved:0n)/1e6;
         this.view.error=config.JUPITER_API_KEY?'CARDS were received, but the USDC quote is unavailable. Check the Jupiter key and provider response.':'CARDS were received. Configure JUPITER_API_KEY to calculate their USDC value.';
         return;
@@ -70,16 +71,23 @@ export class Treasury {
     this.availableMicros=total>0n?total:0n;
     this.view.available=Number(this.availableMicros)/1e6;
     this.view.balanceStatus='ready';
-    this.view.cadenceMinutes=cadence(this.view.rate,this.view.available,this.settings.cadence)/60_000;
     // Readiness gates spending only. Funds remain visible during setup or a pause.
-    if(this.view.blockers.length){this.view.nextAt=0;return;}
+    if(this.view.blockers.length){this.view.nextPackTier=null;return;}
     try{this.tiers=(await this.providers.machines()).map((m:any)=>m.price);}
-    catch{this.view.nextAt=0;this.view.error='Pack availability could not be checked. Retrying automatically.';return;}
+    catch{this.view.nextPackTier=null;this.view.error='Pack availability could not be checked. Retrying automatically.';return;}
     this.view.ready=true;
-    const next=this.lastOpening+this.view.cadenceMinutes*60_000;
-    this.view.nextAt=this.view.nextAt?Math.min(this.view.nextAt,next):next;
+    this.view.nextPackTier=this.settings.paused?null:this.affordable();
   }
   affordable(){return selectPack(this.availableMicros,this.settings.dailyCapUsd===null?null:BigInt(Math.max(0,Math.floor((this.settings.dailyCapUsd-this.view.spentToday)*1e6))),this.tiers,this.paidPacks);}
-  async maintain(){if(Date.now()-this.lastRefresh<30_000)return;try{await this.refresh();if(this.view.ready&&!this.settings.paused)await this.providers.collectFees(this.settings);}catch(error){if(!(error instanceof PendingOperation)){this.view.error=(error as Error).message;this.view.ready=false;}}}
-  opened(){this.lastOpening=Date.now();this.view.nextAt=this.lastOpening+this.view.cadenceMinutes*60_000;this.lastRefresh=0;}
+  async maintain(){
+    if(Date.now()-this.lastRefresh<10_000)return;
+    try{
+      await this.refresh();
+      // Detect deposits promptly without increasing the rate of fee-claim transactions.
+      if(this.view.ready&&!this.settings.paused&&Date.now()-this.lastCollection>=30_000){
+        this.lastCollection=Date.now();await this.providers.collectFees(this.settings);
+      }
+    }catch(error){if(!(error instanceof PendingOperation)){this.view.error=(error as Error).message;this.view.ready=false;this.view.nextPackTier=null;}}
+  }
+  opened(){this.view.nextPackTier=null;this.lastRefresh=0;}
 }

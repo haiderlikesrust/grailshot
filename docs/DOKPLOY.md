@@ -21,6 +21,14 @@ The environment values in Dokploy are explicitly mapped by Compose; they are not
 
 Keep `MAINNET_ENABLED=false` until the mint, treasury recipient/key, RPC, Jupiter key, verified Collector Crypt payment wallet and daily cap are configured and provider transactions have been validated. These deployment files do not enable spending. On an existing database, update the persisted daily cap and reserves through `/admin`; changing initial env defaults does not overwrite saved owner settings.
 
+## Treasury balance troubleshooting
+
+Confirmed USDC and CARDS holdings are read even when spending is disabled, the daily cap is zero, or the SOL reserve is too low. CARDS are shown as an estimated USDC amount using a current Jupiter quote with the slippage allowance deducted. Configure `JUPITER_API_KEY` for that valuation; the Collector Crypt API key is not needed to read balances. A quote or RPC outage displays a pending/unavailable state instead of treating missing data as a zero balance.
+
+In `/admin`, clear the listed launch blockers before expecting a paid round. Set and save a positive daily cap (for example, `25` for a $25 daily pack limit). Keep SOL above the configured gas reserve with additional room for transaction fees. Saved controls live in the database, so changing `DAILY_CAP_USD` in Environment alone will not replace an existing zero cap. Balance checks run about every 30 seconds while waiting for a round; a purchase also requires at least two eligible online entrants.
+
+A manual CARDS or USDC deposit funds the prize pool but does not increase the **Fee income** statistic, which measures confirmed creator-fee claims. The quoted USDC amount may differ from a wallet's displayed market value.
+
 ## Redeployments and storage
 
 For a code or artwork update, open the existing GRAILSHOT Compose service, keep branch `main` and Compose Path `./compose.dokploy.yaml`, and click **Deploy** in **General**. Follow the new record in **Deployments** until the build succeeds and the services are healthy, then refresh the public site. The branding update requires no new environment variables or domain changes. Asset filenames are versioned so the new images do not reuse the old browser-cache entries. See [Dokploy's Compose deployment controls](https://docs.dokploy.com/docs/core/docker-compose).

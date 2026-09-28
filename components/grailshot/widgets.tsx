@@ -9,13 +9,16 @@ const usd=(amount=0)=>new Intl.NumberFormat('en-US',{style:'currency',currency:'
 
 export function FundingWidget({treasury}:{treasury?:TreasuryView}) {
   const available=treasury?.available??0;
+  const balanceStatus=treasury?.balanceStatus??'checking';
+  const priced=balanceStatus==='ready';
+  const caption=balanceStatus==='partial'?'CARDS received · valuation pending':balanceStatus==='unavailable'?'Balance temporarily unavailable':balanceStatus==='unconfigured'?'Prize pool awaiting connection':balanceStatus==='checking'?'Checking the prize pool':treasury?.cardsBalance!=='0'?'Estimated USDC after converting CARDS':'Available for the next pack';
   const nextTier=available<25?25:available<50?50:100;
   return <section className="widget fund-panel">
     <header className="widget-header"><span className="widget-icon blue-icon"><Zap size={18}/></span><div><span className="widget-kicker">THE PRIZE POOL</span><h2>The next drop</h2></div><span className="widget-chip">FEE FUNDED</span></header>
-    <div className="fund-amount"><span className="fund-currency">$</span>{available.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}<span className="fund-unit">USDC</span></div>
-    <p className="fund-caption">Available for the next pack</p>
-    <div className="pack-tiers" aria-label="Affordable pack tiers">{[25,50,100].map(tier=><div className={available>=tier?'tier-reached':''} key={tier}><span className="tier-tick">{available>=tier?<Check size={12}/>:<CircleDot size={10}/>}</span><b>${tier}</b><span>PACK</span></div>)}</div>
-    <div className="fund-meter"><Progress value={Math.min(100,available/nextTier*100)} aria-label={`Funding toward a $${nextTier} pack`}/><div><span>{available>=100?'All pack tiers funded':`${usd(Math.max(0,nextTier-available))} to the $${nextTier} pack`}</span><span>{Math.min(100,Math.floor(available/nextTier*100))}%</span></div></div>
+    <div className="fund-amount"><span className="fund-currency">$</span>{priced?available.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'—'}<span className="fund-unit">USDC</span></div>
+    <p className="fund-caption" role="status">{caption}</p>
+    <div className="pack-tiers" aria-label="Affordable pack tiers">{[25,50,100].map(tier=><div className={priced&&available>=tier?'tier-reached':''} key={tier}><span className="tier-tick">{priced&&available>=tier?<Check size={12}/>:<CircleDot size={10}/>}</span><b>${tier}</b><span>PACK</span></div>)}</div>
+    <div className="fund-meter"><Progress value={priced?Math.min(100,available/nextTier*100):0} aria-label={`Funding toward a $${nextTier} pack`}/><div><span>{!priced?'Funding total pending':available>=100?'All pack tiers funded':`${usd(Math.max(0,nextTier-available))} to the $${nextTier} pack`}</span><span>{priced?`${Math.min(100,Math.floor(available/nextTier*100))}%`:'—'}</span></div></div>
     <div className="fund-metrics"><div><Activity size={14}/><span>Fee income<b>{usd(treasury?.rate)}<small> / hr</small></b></span></div><div><Clock3 size={14}/><span>Drop cadence<b>{treasury?.enabled?`${treasury.cadenceMinutes} min`:'At launch'}</b></span></div></div>
     <div className="fund-footer"><span className="live-dot"/><span>Creator fees</span><ArrowRight size={11}/><span>$CARDS</span><ArrowRight size={11}/><span>USDC</span>{treasury?.address&&<a href={`https://solscan.io/account/${treasury.address}`} target="_blank" rel="noreferrer" aria-label="View treasury on Solscan"><ExternalLink size={13}/></a>}</div>
   </section>;
